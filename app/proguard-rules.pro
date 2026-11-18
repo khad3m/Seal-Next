@@ -66,3 +66,12 @@
 #-keepnames class <1>$$serializer { # -keepnames suffices; class is kept when serializer() is kept.
 #    static <1>$$serializer INSTANCE;
 #}
+
+# Rhino (the JS engine bundled with youtube-dl-android / yt-dlp) references
+# desktop-only JDK classes that don't exist on Android. They are never used at
+# runtime on device, so silence the missing-class errors in R8.
+-dontwarn java.beans.**
+-dontwarn javax.script.**
+-dontwarn javax.naming.**
+-dontwarn org.mozilla.javascript.**
+#}
