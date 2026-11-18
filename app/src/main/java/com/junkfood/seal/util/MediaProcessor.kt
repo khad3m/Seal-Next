@@ -13,6 +13,8 @@ import java.nio.ByteBuffer
  */
 object MediaProcessor {
 
+    private const val MIN_BUFFER_SIZE = 1024 * 1024 // 1 MB floor for high-bitrate 1080p/4K frames
+
     fun getDurationMs(file: File): Long {
         val extractor = MediaExtractor()
         return try {
@@ -34,6 +36,8 @@ object MediaProcessor {
 
     /**
      * Losslessly trims [input] between [startMs] and [endMs] into [output] using MediaMuxer.
+     * Starts at the sync/keyframe at or before [startMs] so the trimmed clip never begins with
+     * corrupted P/B frames.
      */
     fun trimMedia(input: File, output: File, startMs: Long, endMs: Long): Result<File> =
         runCatching {
@@ -46,7 +50,7 @@ object MediaProcessor {
                 muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
                 val trackMap = HashMap<Int, Int>(trackCount)
-                var maxBufSize = 256 * 1024
+                var maxBufSize = MIN_BUFFER_SIZE
                 for (i in 0 until trackCount) {
                     val format = extractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
@@ -68,23 +72,23 @@ object MediaProcessor {
 
                 val buffer = ByteBuffer.allocate(maxBufSize)
                 val bufferInfo = MediaCodec.BufferInfo()
+                var basePtsUs = -1L
 
                 while (true) {
                     val sampleSize = extractor.readSampleData(buffer, 0)
                     if (sampleSize < 0) break
                     val sampleTime = extractor.sampleTime
                     if (sampleTime > endUs) break
-                    if (sampleTime >= startUs) {
-                        val srcTrack = extractor.sampleTrackIndex
-                        val dstTrack = trackMap[srcTrack]
-                        if (dstTrack != null) {
-                            bufferInfo.offset = 0
-                            bufferInfo.size = sampleSize
-                            bufferInfo.presentationTimeUs = sampleTime - startUs
-                            @Suppress("DEPRECATION")
-                            bufferInfo.flags = extractor.sampleFlags
-                            muxer.writeSampleData(dstTrack, buffer, bufferInfo)
-                        }
+                    val srcTrack = extractor.sampleTrackIndex
+                    val dstTrack = trackMap[srcTrack]
+                    if (dstTrack != null) {
+                        if (basePtsUs < 0L) basePtsUs = sampleTime
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = (sampleTime - basePtsUs).coerceAtLeast(0L)
+                        @Suppress("DEPRECATION")
+                        bufferInfo.flags = extractor.sampleFlags
+                        muxer.writeSampleData(dstTrack, buffer, bufferInfo)
                     }
                     extractor.advance()
                 }
@@ -106,7 +110,7 @@ object MediaProcessor {
             try {
                 extractor.setDataSource(input.absolutePath)
                 var audioTrack = -1
-                var maxBufSize = 128 * 1024
+                var maxBufSize = MIN_BUFFER_SIZE
                 for (i in 0 until extractor.trackCount) {
                     val format = extractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()

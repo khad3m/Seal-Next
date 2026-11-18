@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
@@ -52,6 +54,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import android.widget.Toast
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import com.junkfood.seal.ui.page.stream.GlassPlayerSurface
+import com.junkfood.seal.ui.page.stream.MiniPlayerManager
+import com.junkfood.seal.ui.page.stream.StreamSource
+import com.junkfood.seal.ui.page.stream.resolveStreamForPlayer
+import com.junkfood.seal.ui.page.stream.streamSourceFromVideoInfo
 import com.junkfood.seal.ui.common.LocalDarkTheme
 import com.junkfood.seal.ui.common.LocalGradientDarkMode
 import com.junkfood.seal.ui.theme.GradientDarkColors
@@ -96,6 +117,25 @@ fun FetchPreviewSheet(
     var selectedVideoPreset by remember(url) { mutableIntStateOf(-1) }
     var selectedAudioPreset by remember(url) { mutableIntStateOf(-1) }
     var audioOnly by remember(url) { mutableStateOf(false) }
+    var directStreamSource by remember(url) { mutableStateOf<StreamSource?>(null) }
+    var showDirectPlayer by remember(url) { mutableStateOf(false) }
+    var resolvingStream by remember(url) { mutableStateOf(false) }
+    var triggerDirectStream by remember(url) { mutableIntStateOf(0) }
+    val context = LocalContext.current
+
+    LaunchedEffect(triggerDirectStream) {
+        if (triggerDirectStream == 0) return@LaunchedEffect
+        resolvingStream = true
+        val localSource = videoInfo?.let { streamSourceFromVideoInfo(it, url) }
+        val resolved = localSource ?: runCatching { resolveStreamForPlayer(url) }.getOrNull()
+        resolvingStream = false
+        if (resolved != null) {
+            directStreamSource = resolved
+            showDirectPlayer = true
+        } else {
+            errorMessage = "Could not start direct stream for this link"
+        }
+    }
 
     LaunchedEffect(url, retryTrigger) {
         fetching = true
@@ -192,7 +232,7 @@ fun FetchPreviewSheet(
                 }
 
                 playlistInfo != null -> {
-                    val pl = playlistInfo!!
+                    val pl = playlistInfo ?: return@Column
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         tonalElevation = 3.dp,
@@ -480,30 +520,45 @@ fun FetchPreviewSheet(
                     }
 
                     // ---------- Actions ----------
-                    Button(
-                        onClick = {
-                            val prefs =
-                                basePreferences
-                                    .copy(
-                                        extractAudio = audioOnly,
-                                        videoResolution =
-                                            if (!audioOnly && selectedVideoPreset >= 0) selectedVideoPreset
-                                            else basePreferences.videoResolution,
-                                        audioQuality =
-                                            if (audioOnly && selectedAudioPreset >= 0) selectedAudioPreset
-                                            else basePreferences.audioQuality,
-                                    )
-                            onDownload(prefs)
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(
-                            text =
-                                if (audioOnly) "Download audio"
-                                else "Download video",
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                        FilledTonalButton(
+                            onClick = { triggerDirectStream++ },
+                            enabled = !resolvingStream,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
+                        ) {
+                            Icon(Icons.Outlined.PlayCircle, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (resolvingStream) "Loading..." else "Stream Now")
+                        }
+                        Button(
+                            onClick = {
+                                val prefs =
+                                    basePreferences
+                                        .copy(
+                                            extractAudio = audioOnly,
+                                            videoResolution =
+                                                if (!audioOnly && selectedVideoPreset >= 0) selectedVideoPreset
+                                                else basePreferences.videoResolution,
+                                            audioQuality =
+                                                if (audioOnly && selectedAudioPreset >= 0) selectedAudioPreset
+                                                else basePreferences.audioQuality,
+                                        )
+                                onDownload(prefs)
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
+                        ) {
+                            Icon(Icons.Outlined.Download, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (audioOnly) "Audio" else "Download",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                     OutlinedButton(
                         onClick = onDismiss,
@@ -513,6 +568,93 @@ fun FetchPreviewSheet(
                         Text("Cancel")
                     }
                 }
+            }
+        }
+    }
+
+    val streamSrc = if (showDirectPlayer) directStreamSource else null
+    if (streamSrc != null) {
+        val player = remember { MiniPlayerManager.getOrCreatePlayer(context) }
+        var selectedVariant by remember(streamSrc) { mutableIntStateOf(0) }
+        var isLandscape by remember { mutableStateOf(true) }
+
+        DisposableEffect(streamSrc) {
+            val v = streamSrc.variants.first()
+            MiniPlayerManager.playStream(
+                context = context,
+                streamUrl = v.url,
+                title = streamSrc.title,
+                uploader = streamSrc.uploader,
+                thumbnailUrl = streamSrc.thumbnailUrl,
+                sourceUrl = streamSrc.originalUrl,
+                audioUrl = v.audioUrl,
+            )
+            val listener =
+                object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        Toast.makeText(
+                            context,
+                            error.localizedMessage ?: "Stream playback failed",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+
+                    override fun onVideoSizeChanged(videoSize: VideoSize) {
+                        if (videoSize.width > 0 && videoSize.height > 0) {
+                            isLandscape = videoSize.width >= videoSize.height
+                        }
+                    }
+                }
+            player.addListener(listener)
+            val activity = context as? Activity
+            val window = activity?.window
+            val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+            onDispose {
+                player.removeListener(listener)
+                controller?.show(WindowInsetsCompat.Type.systemBars())
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+
+        LaunchedEffect(isLandscape) {
+            val activity = context as? Activity ?: return@LaunchedEffect
+            activity.requestedOrientation =
+                if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+
+        Dialog(
+            onDismissRequest = { showDirectPlayer = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                GlassPlayerSurface(
+                    player = player,
+                    title = streamSrc.title,
+                    uploader = streamSrc.uploader,
+                    isFullscreen = true,
+                    variants = streamSrc.variants,
+                    selectedVariant = selectedVariant,
+                    onSelectVariant = { idx ->
+                        selectedVariant = idx
+                        val v = streamSrc.variants[idx]
+                        MiniPlayerManager.playStream(
+                            context = context,
+                            streamUrl = v.url,
+                            title = streamSrc.title,
+                            uploader = streamSrc.uploader,
+                            thumbnailUrl = streamSrc.thumbnailUrl,
+                            sourceUrl = streamSrc.originalUrl,
+                            positionMs = player.currentPosition,
+                            audioUrl = v.audioUrl,
+                        )
+                    },
+                    onExitFullscreen = { showDirectPlayer = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }

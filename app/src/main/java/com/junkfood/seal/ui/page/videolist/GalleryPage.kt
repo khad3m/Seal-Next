@@ -1,6 +1,21 @@
 package com.junkfood.seal.ui.page.videolist
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.outlined.Forward10
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.Replay10
+import androidx.compose.material.icons.outlined.ScreenRotation
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import kotlinx.coroutines.delay
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -58,6 +73,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.NavigateBefore
 import androidx.compose.material.icons.automirrored.outlined.NavigateNext
@@ -190,6 +206,7 @@ private suspend fun extractTileMeta(context: Context, f: File): TileMediaMeta =
                     durText =
                         if (sec >= 3600) "%d:%02d:%02d".format(sec / 3600, sec % 3600 / 60, sec % 60)
                         else "%d:%02d".format(sec / 60, sec % 60)
+                    if (durationCache.size > 300) durationCache.clear()
                     durationCache[key] = durText
                 }
             }
@@ -226,7 +243,7 @@ private fun formatFileSize(bytes: Long): String =
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun GalleryPage(onNavigateBack: () -> Unit) {
+fun GalleryPage(onNavigateBack: () -> Unit, onOpenVault: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalDarkTheme.current.isDarkTheme()
@@ -303,6 +320,9 @@ fun GalleryPage(onNavigateBack: () -> Unit) {
                         }
                     },
                     actions = {
+                        IconButton(onClick = onOpenVault) {
+                            Icon(Icons.Outlined.Lock, contentDescription = "Private Vault")
+                        }
                         IconButton(
                             onClick = {
                                 val first =
@@ -462,9 +482,15 @@ fun GalleryPage(onNavigateBack: () -> Unit) {
                 }
                 val tot = (vBytes + aBytes).coerceAtLeast(1L)
                 val vRatio = (vBytes.toFloat() / tot.toFloat()).coerceIn(0f, 1f)
-                Column(
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 2.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -506,6 +532,7 @@ fun GalleryPage(onNavigateBack: () -> Unit) {
                         }
                     }
                 }
+                }
             }
             when {
                 files == null -> {
@@ -534,7 +561,7 @@ fun GalleryPage(onNavigateBack: () -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "Downloaded videos and audio will appear here in a glossy grid.",
+                                text = "Downloaded videos and audio will appear here.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -788,17 +815,7 @@ private fun SamsungGlossyGridTile(
             }
         }
 
-        // Glossy top specular sheen
-        Box(
-            modifier =
-                Modifier.fillMaxWidth()
-                    .height(28.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.White.copy(alpha = 0.22f), Color.Transparent)
-                        )
-                    )
-        )
+
 
         // Bottom frosted duration / format badge
         val badgeText =
@@ -920,6 +937,29 @@ private fun GalleryListRow(
     }
 }
 
+private fun formatGalleryTime(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    return if (totalSec >= 3600L) {
+        "%d:%02d:%02d".format(totalSec / 3600L, (totalSec % 3600L) / 60L, totalSec % 60L)
+    } else {
+        "%d:%02d".format(totalSec / 60L, totalSec % 60L)
+    }
+}
+
+private enum class GalleryResizeMode(val label: String, val mode: Int) {
+    FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    ;
+
+    fun next(): GalleryResizeMode =
+        when (this) {
+            FIT -> FILL
+            FILL -> STRETCH
+            STRETCH -> FIT
+        }
+}
+
 @AndroidXOptIn(UnstableApi::class)
 @Composable
 private fun FullscreenGalleryViewer(
@@ -931,6 +971,7 @@ private fun FullscreenGalleryViewer(
     onMediaCreated: () -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
     val pagerState = rememberPagerState(initialPage = initialIndex) { files.size }
     val pagerScope = rememberCoroutineScope()
     val currentIndex = pagerState.currentPage
@@ -940,14 +981,80 @@ private fun FullscreenGalleryViewer(
 
     var showControls by remember { mutableStateOf(true) }
     var isMuted by remember { mutableStateOf(false) }
-    var isZoomed by remember { mutableStateOf(false) }
+    var resizeMode by remember { mutableStateOf(GalleryResizeMode.FIT) }
     var speed by remember { mutableFloatStateOf(1.0f) }
+    var isLandscapeVideo by remember { mutableStateOf(false) }
+    var manualOrientation by remember { mutableStateOf<Int?>(null) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var showTrimDialog by remember { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var gestureHudText by remember { mutableStateOf<String?>(null) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var scrubMs by remember { mutableLongStateOf(-1L) }
+    var scrubPreviewBmp by remember(currentFile.absolutePath) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(currentFile.absolutePath, scrubMs / 2000L) {
+        if (scrubMs >= 0L && !isAudio) {
+            val targetUs = scrubMs * 1000L
+            val frame = withContext(Dispatchers.IO) {
+                val r = MediaMetadataRetriever()
+                try {
+                    r.setDataSource(currentFile.absolutePath)
+                    if (android.os.Build.VERSION.SDK_INT >= 27) {
+                        r.getScaledFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 90)
+                    } else {
+                        r.getFrameAtTime(targetUs)?.let { Bitmap.createScaledBitmap(it, 160, 90, true) }
+                    }
+                } catch (_: Throwable) {
+                    null
+                } finally {
+                    runCatching { r.release() }
+                }
+            }
+            if (scrubMs >= 0L && frame != null) scrubPreviewBmp = frame
+        } else if (scrubMs < 0L) {
+            scrubPreviewBmp = null
+        }
+    }
+
+    val playbackUi by produceState(initialValue = 0L to 0L, player) {
+        while (true) {
+            value = player.currentPosition.coerceAtLeast(0L) to player.duration.coerceAtLeast(0L)
+            delay(250L)
+        }
+    }
+    val positionMs = playbackUi.first
+    val durationMs = playbackUi.second
+
+    DisposableEffect(player) {
+        val listener =
+            object : Player.Listener {
+                override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    if (videoSize.width > 0 && videoSize.height > 0) {
+                        isLandscapeVideo = videoSize.width > videoSize.height
+                    }
+                }
+
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    playerError = error.localizedMessage ?: "Cannot play this media file"
+                }
+            }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
 
     LaunchedEffect(currentFile.absolutePath) {
+        playerError = null
+        resizeMode = GalleryResizeMode.FIT
+        manualOrientation = null
+        isLandscapeVideo = false
+        scrubMs = -1L
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(currentFile)))
         player.setPlaybackSpeed(speed)
         player.volume = if (isMuted) 0f else 1f
@@ -955,8 +1062,31 @@ private fun FullscreenGalleryViewer(
         player.playWhenReady = true
     }
 
+    // Auto-orient: 16:9 / landscape videos open in full-screen landscape without cropping;
+    // vertical / Reels-type videos stay in portrait full-screen fit mode.
+    LaunchedEffect(isAudio, isLandscapeVideo, manualOrientation) {
+        activity ?: return@LaunchedEffect
+        val target =
+            when {
+                manualOrientation != null -> manualOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                isAudio -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                isLandscapeVideo -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        if (activity.requestedOrientation != target) {
+            activity.requestedOrientation = target
+        }
+    }
+
+    // Auto-hide controls while playing
+    LaunchedEffect(showControls, isPlaying, showOverflowMenu) {
+        if (showControls && isPlaying && !showOverflowMenu) {
+            delay(3500L)
+            showControls = false
+        }
+    }
+
     DisposableEffect(Unit) {
-        val activity = context as? Activity
         val window = activity?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         controller?.systemBarsBehavior =
@@ -964,6 +1094,7 @@ private fun FullscreenGalleryViewer(
         controller?.hide(WindowInsetsCompat.Type.systemBars())
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             player.release()
         }
     }
@@ -979,13 +1110,13 @@ private fun FullscreenGalleryViewer(
         var seekHint by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(seekHint) {
             if (seekHint != null) {
-                kotlinx.coroutines.delay(700L)
+                delay(700L)
                 seekHint = null
             }
         }
         LaunchedEffect(gestureHudText) {
             if (gestureHudText != null) {
-                kotlinx.coroutines.delay(900L)
+                delay(900L)
                 gestureHudText = null
             }
         }
@@ -998,7 +1129,7 @@ private fun FullscreenGalleryViewer(
                             change.consume()
                             val isLeft = change.position.x < size.width / 2f
                             if (isLeft) {
-                                val win = (context as? Activity)?.window
+                                val win = activity?.window
                                 if (win != null) {
                                     val lp = win.attributes
                                     val cur = if (lp.screenBrightness < 0f) 0.5f else lp.screenBrightness
@@ -1025,7 +1156,10 @@ private fun FullscreenGalleryViewer(
                             onTap = { showControls = !showControls },
                             onDoubleTap = { offset ->
                                 val delta = if (offset.x < size.width / 2f) -10_000L else 10_000L
-                                val target = (player.currentPosition + delta).coerceAtLeast(0L)
+                                val maxDur = player.duration.coerceAtLeast(0L)
+                                val target =
+                                    if (maxDur > 0L) (player.currentPosition + delta).coerceIn(0L, maxDur)
+                                    else (player.currentPosition + delta).coerceAtLeast(0L)
                                 player.seekTo(target)
                                 seekHint = if (delta < 0) "-10s" else "+10s"
                             },
@@ -1036,12 +1170,9 @@ private fun FullscreenGalleryViewer(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
             ) { page ->
-                if (page != currentIndex) {
-                    Box(Modifier.fillMaxSize().background(Color.Black))
-                } else {
-                    Box(Modifier.fillMaxSize())
-                }
+                Box(Modifier.fillMaxSize().background(Color.Black))
             }
+
             if (isAudio) {
                 Box(
                     modifier =
@@ -1064,7 +1195,7 @@ private fun FullscreenGalleryViewer(
                         Surface(
                             shape = CircleShape,
                             color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.size(120.dp),
+                                modifier = Modifier.size(120.dp),
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -1091,21 +1222,36 @@ private fun FullscreenGalleryViewer(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         this.player = player
+                        this.useController = false
                         layoutParams = ViewGroup.LayoutParams(-1, -1)
                     }
                 },
                 update = { pv ->
-                    pv.resizeMode =
-                        if (isZoomed) AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    pv.resizeMode = resizeMode.mode
                 },
                 modifier = if (isAudio) Modifier.size(1.dp) else Modifier.fillMaxSize(),
             )
 
+            playerError?.let { err ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xDD1C1C22),
+                    border = BorderStroke(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.5f)),
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                ) {
+                    Text(
+                        text = err,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    )
+                }
+            }
+
             seekHint?.let { hint ->
                 Surface(
                     shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.72f),
+                    color = Color.Black.copy(alpha = 0.68f),
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     Text(
@@ -1117,10 +1263,11 @@ private fun FullscreenGalleryViewer(
                     )
                 }
             }
+
             gestureHudText?.let { hud ->
                 Surface(
                     shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.72f),
+                    color = Color.Black.copy(alpha = 0.68f),
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     Text(
@@ -1132,7 +1279,8 @@ private fun FullscreenGalleryViewer(
                     )
                 }
             }
-            // Glossy Top Bar Overlay
+
+            // Clean Top Bar Overlay
             AnimatedVisibility(
                 visible = showControls,
                 enter = fadeIn(),
@@ -1148,7 +1296,7 @@ private fun FullscreenGalleryViewer(
                                 )
                             )
                             .statusBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onDismiss) {
@@ -1169,52 +1317,262 @@ private fun FullscreenGalleryViewer(
                         )
                         Text(
                             text =
-                                "${currentIndex + 1}/${files.size}  •  ${formatFileSize(currentFile.length())}",
+                                "${currentIndex + 1}/${files.size}  •  ${formatFileSize(currentFile.length())}" +
+                                    if (!isAudio) "  •  ${resizeMode.label}" else "",
                             color = Color.White.copy(alpha = 0.72f),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
-                    IconButton(onClick = { showInfoDialog = true }) {
-                        Icon(Icons.Outlined.Info, contentDescription = "Info", tint = Color.White)
+                    if (!isAudio) {
+                        IconButton(
+                            onClick = {
+                                val nextOrientation =
+                                    if (manualOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+                                        (manualOrientation == null && isLandscapeVideo)
+                                    ) {
+                                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                    } else {
+                                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    }
+                                manualOrientation = nextOrientation
+                            }
+                        ) {
+                            Icon(
+                                Icons.Outlined.ScreenRotation,
+                                contentDescription = "Rotate screen",
+                                tint = Color.White,
+                            )
+                        }
                     }
-                    IconButton(onClick = { FileUtil.openFile(currentFile.absolutePath) {} }) {
-                        Icon(
-                            Icons.Outlined.OpenInNew,
-                            contentDescription = "Open externally",
-                            tint = Color.White,
-                        )
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(
+                                Icons.Outlined.MoreVert,
+                                contentDescription = "More options",
+                                tint = Color.White,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Audio & Subtitles") },
+                                leadingIcon = { Icon(Icons.Outlined.Subtitles, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showTracksDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Trim / Extract Audio") },
+                                leadingIcon = { Icon(Icons.Outlined.ContentCut, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showTrimDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                leadingIcon = { Icon(Icons.Outlined.Share, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    FileUtil.createIntentForSharingFile(currentFile.absolutePath)?.let {
+                                        context.startActivity(
+                                            Intent.createChooser(it, null)
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Move to Private Vault") },
+                                leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onMoveToVault(currentFile)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open Externally") },
+                                leadingIcon = { Icon(Icons.Outlined.OpenInNew, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    FileUtil.openFile(currentFile.absolutePath) {}
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Media Info") },
+                                leadingIcon = { Icon(Icons.Outlined.Info, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showInfoDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.Delete,
+                                        null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onDelete(currentFile)
+                                },
+                            )
+                        }
                     }
                 }
             }
 
-            // Glossy Bottom Control Dock
+            // Center Play / Pause / ±10s Overlay
+            AnimatedVisibility(
+                visible = showControls && playerError == null,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.Center),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        onClick = {
+                            val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
+                            player.seekTo(target)
+                            seekHint = "-10s"
+                        },
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.45f),
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Replay10, "Rewind 10s", tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+                    }
+                    Surface(
+                        onClick = {
+                            if (player.isPlaying) player.pause() else player.play()
+                        },
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.55f),
+                        modifier = Modifier.size(66.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(34.dp),
+                            )
+                        }
+                    }
+                    Surface(
+                        onClick = {
+                            val maxDur = player.duration.coerceAtLeast(0L)
+                            val target =
+                                if (maxDur > 0L) (player.currentPosition + 10_000L).coerceAtMost(maxDur)
+                                else player.currentPosition + 10_000L
+                            player.seekTo(target)
+                            seekHint = "+10s"
+                        },
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.45f),
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Forward10, "Forward 10s", tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+                    }
+                }
+            }
+
+            // Clean Bottom Scrim & Seekbar + Compact Controls
             AnimatedVisibility(
                 visible = showControls,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color(0xCC141418),
+                Column(
                     modifier =
-                        Modifier.navigationBarsPadding()
-                            .padding(horizontal = 14.dp, vertical = 14.dp)
-                            .fillMaxWidth()
-                            .border(
-                                1.dp,
-                                Color.White.copy(alpha = 0.16f),
-                                RoundedCornerShape(24.dp),
-                            ),
+                        Modifier.fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f))
+                                )
+                            )
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    if (scrubMs >= 0L && !isAudio) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xDD141418),
+                            modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 4.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                scrubPreviewBmp?.let { bmp ->
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(128.dp, 72.dp).clip(RoundedCornerShape(8.dp)),
+                                    )
+                                }
+                                Text(
+                                    text = formatGalleryTime(scrubMs),
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                    Slider(
+                        value =
+                            when {
+                                scrubMs >= 0L -> scrubMs.toFloat()
+                                durationMs > 0L -> positionMs.toFloat()
+                                else -> 0f
+                            },
+                        onValueChange = { scrubMs = it.toLong() },
+                        onValueChangeFinished = {
+                            if (scrubMs >= 0L) player.seekTo(scrubMs)
+                            scrubMs = -1L
+                        },
+                        valueRange = 0f..(if (durationMs > 0L) durationMs.toFloat() else 1f),
+                        colors =
+                            SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = Color.White,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.28f),
+                            ),
+                        modifier = Modifier.fillMaxWidth().height(28.dp),
+                    )
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Text(
+                            text = "${formatGalleryTime(if (scrubMs >= 0L) scrubMs else positionMs)} / ${formatGalleryTime(durationMs)}",
+                            color = Color.White.copy(alpha = 0.9f),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = { pagerScope.launch { pagerState.animateScrollToPage(currentIndex - 1) } },
                             enabled = currentIndex > 0,
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.NavigateBefore,
@@ -1226,13 +1584,15 @@ private fun FullscreenGalleryViewer(
                             onClick = {
                                 isMuted = !isMuted
                                 player.volume = if (isMuted) 0f else 1f
-                            }
+                            },
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 if (isMuted) Icons.AutoMirrored.Outlined.VolumeOff
                                 else Icons.AutoMirrored.Outlined.VolumeUp,
                                 contentDescription = "Mute",
                                 tint = Color.White,
+                                modifier = Modifier.size(20.dp),
                             )
                         }
                         TextButton(
@@ -1250,57 +1610,27 @@ private fun FullscreenGalleryViewer(
                             Text("${speed}x", color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
                         if (!isAudio) {
-                            IconButton(onClick = { isZoomed = !isZoomed }) {
+                            IconButton(
+                                onClick = {
+                                    resizeMode = resizeMode.next()
+                                    gestureHudText = "Screen: ${resizeMode.label}"
+                                },
+                                modifier = Modifier.size(36.dp),
+                            ) {
                                 Icon(
                                     Icons.Outlined.AspectRatio,
-                                    contentDescription = "Fit/Zoom",
-                                    tint = if (isZoomed) MaterialTheme.colorScheme.primary else Color.White,
+                                    contentDescription = "Fit / Fill / Stretch",
+                                    tint =
+                                        if (resizeMode != GalleryResizeMode.FIT) MaterialTheme.colorScheme.primary
+                                        else Color.White,
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
                         }
                         IconButton(
-                            onClick = {
-                                FileUtil.createIntentForSharingFile(currentFile.absolutePath)?.let {
-                                    context.startActivity(
-                                        Intent.createChooser(it, null)
-                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    )
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color.White)
-                        }
-                        IconButton(onClick = { showTracksDialog = true }) {
-                            Icon(
-                                Icons.Outlined.Subtitles,
-                                contentDescription = "Audio & Subtitles",
-                                tint = Color.White,
-                            )
-                        }
-                        IconButton(onClick = { showTrimDialog = true }) {
-                            Icon(
-                                Icons.Outlined.ContentCut,
-                                contentDescription = "Trim / Extract Audio",
-                                tint = Color.White,
-                            )
-                        }
-                        IconButton(onClick = { onMoveToVault(currentFile) }) {
-                            Icon(
-                                Icons.Outlined.VisibilityOff,
-                                contentDescription = "Move to Vault",
-                                tint = Color.White,
-                            )
-                        }
-                        IconButton(onClick = { onDelete(currentFile) }) {
-                            Icon(
-                                Icons.Outlined.Delete,
-                                contentDescription = "Delete",
-                                tint = Color(0xFFFF6B6B),
-                            )
-                        }
-                        IconButton(
                             onClick = { pagerScope.launch { pagerState.animateScrollToPage(currentIndex + 1) } },
                             enabled = currentIndex < files.lastIndex,
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.NavigateNext,
@@ -1313,8 +1643,6 @@ private fun FullscreenGalleryViewer(
             }
         }
     }
-
-
 
     if (showTracksDialog) {
         val audioLangs = remember(currentFile, showTracksDialog) {

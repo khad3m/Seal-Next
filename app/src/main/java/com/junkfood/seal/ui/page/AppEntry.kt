@@ -237,14 +237,28 @@ fun AppEntry(dialogViewModel: DownloadDialogViewModel) {
                         },
                     )
                 }
-                animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
+                animatedComposable(Route.DOWNLOADS) {
+                    VideoListPage(
+                        onNavigateBack = { onNavigateBack() },
+                        onOpenVault = {
+                            navController.navigate(Route.HIDDEN_CONTENT) { launchSingleTop = true }
+                        },
+                    )
+                }
                 animatedComposableVariant(Route.TASK_LIST) {
                     TaskListPage(
                         onNavigateBack = onNavigateBack,
                         onNavigateToDetail = { navController.navigate(Route.TASK_LOG id it) },
                     )
                 }
-                animatedComposable(Route.GALLERY) { GalleryPage(onNavigateBack) }
+                animatedComposable(Route.GALLERY) {
+                    GalleryPage(
+                        onNavigateBack = onNavigateBack,
+                        onOpenVault = {
+                            navController.navigate(Route.HIDDEN_CONTENT) { launchSingleTop = true }
+                        },
+                    )
+                }
                 animatedComposable(
                     route = "${Route.STREAM}?url={url}",
                     arguments = listOf(
@@ -370,8 +384,12 @@ fun AppEntry(dialogViewModel: DownloadDialogViewModel) {
                     currentRoute == Route.MORE_TOOLS
             val miniState by MiniPlayerManager.state.collectAsStateWithLifecycle()
             val showMini = miniState.isVisible && currentRoute?.startsWith(Route.STREAM) != true
+            val showDockBar =
+                showFloatingDock && windowWidth != androidx.compose.material3.windowsizeclass.WindowWidthSizeClass.Expanded
             Column(
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier =
+                    Modifier.align(Alignment.BottomCenter)
+                        .then(if (!showDockBar) Modifier.navigationBarsPadding() else Modifier),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 AnimatedVisibility(
@@ -385,7 +403,13 @@ fun AppEntry(dialogViewModel: DownloadDialogViewModel) {
                         thumbnailUrl = miniState.thumbnailUrl,
                         isPlaying = miniState.isPlaying,
                         onOpen = {
-                            navController.navigate(Route.STREAM) { launchSingleTop = true }
+                            val targetRoute =
+                                if (miniState.sourceUrl.isNotBlank()) {
+                                    "${Route.STREAM}?url=${Uri.encode(miniState.sourceUrl)}"
+                                } else {
+                                    Route.STREAM
+                                }
+                            navController.navigate(targetRoute) { launchSingleTop = true }
                         },
                         onTogglePlay = { MiniPlayerManager.togglePlayPause() },
                         onClose = { MiniPlayerManager.dismissAndStop() },
@@ -399,7 +423,10 @@ fun AppEntry(dialogViewModel: DownloadDialogViewModel) {
                     FloatingGlassNavDock(
                     currentRoute = currentRoute,
                     onNavigate = { route ->
-                        if (currentRoute != route) {
+                        val alreadySelected =
+                            currentRoute == route ||
+                                (route == Route.STREAM && currentRoute?.startsWith(Route.STREAM) == true)
+                        if (!alreadySelected) {
                             navController.navigate(route) {
                                 launchSingleTop = true
                                 popUpTo(route = Route.HOME)

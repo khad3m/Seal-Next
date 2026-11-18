@@ -98,6 +98,12 @@ object AdBlockFilter {
     private const val KEY_CUSTOM_BLOCK = "adblock_custom_domains"
     private const val KEY_TOTAL_BLOCKED = "adblock_total_blocked"
 
+    @Volatile
+    private var cachedWhitelist: Set<String>? = null
+
+    @Volatile
+    private var cachedCustomBlocked: Set<String>? = null
+
     fun getTotalAdsBlocked(): Long =
         runCatching { MMKV.defaultMMKV().decodeLong(KEY_TOTAL_BLOCKED, 0L) }.getOrDefault(0L)
 
@@ -108,8 +114,12 @@ object AdBlockFilter {
         }
     }
 
-    fun getWhitelistHosts(): Set<String> =
-        runCatching { MMKV.defaultMMKV().decodeStringSet(KEY_WHITELIST, emptySet()).orEmpty() }.getOrDefault(emptySet())
+    fun getWhitelistHosts(): Set<String> {
+        cachedWhitelist?.let { return it }
+        val loaded = runCatching { MMKV.defaultMMKV().decodeStringSet(KEY_WHITELIST, emptySet()).orEmpty() }.getOrDefault(emptySet())
+        cachedWhitelist = loaded
+        return loaded
+    }
 
     fun isHostWhitelisted(pageUrl: String): Boolean {
         val host = runCatching { Uri.parse(pageUrl).host?.lowercase() }.getOrNull() ?: return false
@@ -120,17 +130,23 @@ object AdBlockFilter {
         val host = runCatching { Uri.parse(pageUrl).host?.lowercase() }.getOrNull() ?: return false
         val current = getWhitelistHosts().toMutableSet()
         val added = if (host in current) { current.remove(host); false } else { current.add(host); true }
+        cachedWhitelist = current.toSet()
         runCatching { MMKV.defaultMMKV().encode(KEY_WHITELIST, current) }
         return added
     }
 
-    fun getCustomBlockedDomains(): Set<String> =
-        runCatching { MMKV.defaultMMKV().decodeStringSet(KEY_CUSTOM_BLOCK, emptySet()).orEmpty() }.getOrDefault(emptySet())
+    fun getCustomBlockedDomains(): Set<String> {
+        cachedCustomBlocked?.let { return it }
+        val loaded = runCatching { MMKV.defaultMMKV().decodeStringSet(KEY_CUSTOM_BLOCK, emptySet()).orEmpty() }.getOrDefault(emptySet())
+        cachedCustomBlocked = loaded
+        return loaded
+    }
 
     fun addCustomBlockedDomain(domain: String) {
         val clean = domain.trim().lowercase().removePrefix("https://").removePrefix("http://").substringBefore("/")
         if (clean.isBlank()) return
         val current = getCustomBlockedDomains().toMutableSet().apply { add(clean) }
+        cachedCustomBlocked = current.toSet()
         runCatching { MMKV.defaultMMKV().encode(KEY_CUSTOM_BLOCK, current) }
     }
 

@@ -28,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.ModalBottomSheetValue
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.MoreVert
@@ -134,7 +135,7 @@ private const val TAG = "VideoListPage"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoListPage(viewModel: VideoListViewModel = koinViewModel(), onNavigateBack: () -> Unit) {
+fun VideoListPage(viewModel: VideoListViewModel = koinViewModel(), onNavigateBack: () -> Unit, onOpenVault: () -> Unit = {}) {
     val viewState by viewModel.stateFlow.collectAsStateWithLifecycle()
     val fullVideoList by viewModel.videoListFlow.collectAsStateWithLifecycle(emptyList())
     val searchedVideoList by
@@ -290,6 +291,17 @@ fun VideoListPage(viewModel: VideoListViewModel = koinViewModel(), onNavigateBac
                 navigationIcon = { BackButton { onNavigateBack() } },
                 actions = {
                     Row {
+                        IconButton(
+                            onClick = {
+                                view.slightHapticFeedback()
+                                onOpenVault()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Lock,
+                                contentDescription = "Private Vault",
+                            )
+                        }
                         if (fullVideoList.isNotEmpty()) {
                             IconToggleButton(
                                 modifier = Modifier,

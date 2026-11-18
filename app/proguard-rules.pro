@@ -75,3 +75,6 @@
 -dontwarn javax.naming.**
 -dontwarn org.mozilla.javascript.**
 #}
+
+-keep class org.schabi.newpipe.** { *; }
+-dontwarn org.schabi.newpipe.**

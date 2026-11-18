@@ -8,6 +8,25 @@ Technicalss). For the full history before v1.0.0, see the upstream
 [Seal changelog](https://github.com/JunkFood02/Seal/blob/main/CHANGELOG.md) and
 [Seal Plus changelog](https://github.com/MaheshTechnicals/Sealplus/blob/main/CHANGELOG.md).
 
+## [1.2.0] – 2026-11-18
+
+The self-updating release, developed and maintained by **Md Khademul Islam**.
+
+### 🔄 In-App Update System
+* **Auto-check on launch** — the app now checks GitHub for a newer stable release every time it starts and shows an update card with the full release notes
+* **Manual check** — Settings → About → Check for Updates, with stable / pre-release channel selection and an auto-update toggle
+* **One-tap download & install** — the update APK downloads with a live progress dialog and opens the installer straight from the app; the "install unknown apps" permission is requested once and later updates install with a single tap
+
+### 🌐 Browser & Player
+* **Browser history & bookmarks** — visited pages and saved sites in the built-in browser now persist between sessions
+* **Picture-in-Picture** — the player supports PiP and survives rotation and window resizing without restarting playback
+* **Playback resume** — the player remembers where you stopped and continues from there
+* **Smarter YouTube extraction** — stream URLs are normalized and quality variants are built from the video's actual formats, with NewPipe falling back to the yt-dlp engine
+
+### 🏠 Home & Polish
+* Home cards, details dialogs and the glowing action button were refactored into dedicated components for a cleaner, snappier home screen
+* Under-the-hood improvements to the ad-block filter, Wi-Fi queue manager, hidden-content vault and download pipeline
+
 ## [1.1.0] – 2026-11-18
 
 The premium experience release, developed and maintained by **Md Khademul Islam**.
@@ -39,6 +58,7 @@ The premium experience release, developed and maintained by **Md Khademul Islam*
 ### 📦 Distribution
 * **armeabi-v7a only** — every release now ships one 32-bit signed APK that installs on 32-bit and 64-bit devices alike
 
+[1.2.0]: https://github.com/khad3m/Seal-Next/releases/tag/v1.2.0
 [1.1.0]: https://github.com/khad3m/Seal-Next/releases/tag/v1.1.0
 
 ## [1.0.0] – 2026-11-18

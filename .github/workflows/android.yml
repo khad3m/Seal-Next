@@ -78,22 +78,22 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Seal Next v${{ steps.version.outputs.VERSION }}
           body: |
-            ## ✨ Seal Next v1.1.0
+            ## ✨ Seal Next v1.2.0
 
             **Seal Next** — a beautiful, modern video & audio downloader for Android built on yt-dlp.
 
             ### 📦 Download
             | File | Device |
             | --- | --- |
-            | `SealNext-1.1.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
-            | `SealNext-1.1.0-source.zip` | Complete source code backup of this release |
+            | `SealNext-1.2.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
+            | `SealNext-1.2.0-source.zip` | Complete source code backup of this release |
 
-            ### 🚀 What's new in v1.1.0
-            - 🎯 **Premium fetch sheet** — paste a link and instantly see the video info card with download presets & real quality grid
-            - 🛡️ **Reliable downloads** — yt-dlp auto-updates in the background every day, so YouTube & other sites keep working
-            - ▶️ **Solid glassmorphism player** — double-tap to skip, swipe to seek, drag for volume & brightness, auto-hiding glass controls
-            - 🌐 **PWA-style browser** — native launcher cards for YouTube / Instagram / TikTok / Facebook + any address, with a floating expandable action button
-            - 🧠 **Dual-engine playback** — NewPipe Extractor now falls back to the yt-dlp engine, fixing most YouTube "missing …" errors
+            ### 🚀 What's new in v1.2.0
+            - 🔄 **In-app updates** — the app now checks for new releases on launch and downloads & installs the update APK with one tap (Settings → About → Check for Updates for a manual check)
+            - 🌐 **Browser history & bookmarks** — visited pages and saved sites persist between sessions
+            - ▶️ **Picture-in-Picture + playback resume** — shrink the player to a floating window and pick up exactly where you stopped
+            - 🧠 **Smarter YouTube playback** — normalized stream URLs and quality variants built from the video's real formats, NewPipe with yt-dlp fallback
+            - 🏠 **Home polish** — cards, details dialogs and the glowing action button refactored into dedicated components
 
             ---
             **Developer:** [Md Khademul Islam](https://github.com/khad3m) · Licensed under the [MIT License](LICENSE)

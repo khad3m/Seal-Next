@@ -7,8 +7,12 @@ import android.net.NetworkRequest
 import com.junkfood.seal.App
 import com.junkfood.seal.Downloader
 import com.tencent.mmkv.MMKV
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Zero-dependency Wi-Fi Queue Manager backed by MMKV + ConnectivityManager.NetworkCallback.
@@ -17,6 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 object WifiQueueManager {
 
     private const val KEY_WIFI_QUEUE = "wifi_scheduled_urls"
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
     private var registered = false
 
     private val _queuedUrls = MutableStateFlow<List<String>>(loadQueue())
@@ -65,10 +72,16 @@ object WifiQueueManager {
 
     fun flushIfOnWifi() {
         if (!isOnWifi()) return
+        flushNow()
+    }
+
+    private fun flushNow() {
         val items = _queuedUrls.value
         if (items.isEmpty()) return
         saveQueue(emptyList())
-        items.forEach { Downloader.getInfoAndDownload(it) }
+        scope.launch {
+            items.forEach { Downloader.getInfoAndDownload(it) }
+        }
     }
 
     fun ensureRegistered() {
@@ -84,7 +97,10 @@ object WifiQueueManager {
                     req,
                     object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
-                            flushIfOnWifi()
+                            val caps = App.connectivityManager.getNetworkCapabilities(network)
+                            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                                flushNow()
+                            }
                         }
                     },
                 )
