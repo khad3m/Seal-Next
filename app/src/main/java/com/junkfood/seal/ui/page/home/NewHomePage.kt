@@ -146,11 +146,13 @@ import com.junkfood.seal.ui.page.downloadv2.configure.DownloadDialogViewModel.Ac
 import com.junkfood.seal.ui.page.downloadv2.configure.FormatPage
 import com.junkfood.seal.ui.page.downloadv2.configure.PlaylistSelectionPage
 import com.junkfood.seal.ui.component.ConfirmButton
+import com.junkfood.seal.ui.component.FetchPreviewSheet
 import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.SealDialog
 import com.junkfood.seal.ui.theme.GradientDarkColors
 import com.junkfood.seal.util.DatabaseUtil
 import androidx.compose.material.icons.outlined.Wifi
+import com.junkfood.seal.util.CONFIGURE
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.WifiQueueManager
 import com.junkfood.seal.util.FileUtil
@@ -220,6 +222,9 @@ fun NewHomePage(
     
     var showExitDialog by remember { mutableStateOf(false) }
     var urlText by remember { mutableStateOf("") }
+    // Premium fetch sheet (bug #1): URL currently shown in the auto-fetch preview sheet,
+    // or null when the sheet is closed.
+    var fetchSheetUrl by remember { mutableStateOf<String?>(null) }
     var duplicateUrlPending by remember { mutableStateOf<String?>(null) }
     var duplicateTitle by remember { mutableStateOf<String?>(null) }
     val wifiQueue by WifiQueueManager.queuedUrls.collectAsStateWithLifecycle()
@@ -878,7 +883,11 @@ fun NewHomePage(
                                     urlText = clipUrl
                                     dismissedClipboardUrl = clipUrl
                                     detectedClipboardUrl = null
-                                    dialogViewModel.startDownload(listOf(clipUrl))
+                                    if (CONFIGURE.getBoolean() && !clipUrl.contains("list=")) {
+                                        fetchSheetUrl = clipUrl
+                                    } else {
+                                        dialogViewModel.startDownload(listOf(clipUrl))
+                                    }
                                 }
                             ) {
                                 Text("Fetch")
@@ -917,6 +926,9 @@ fun NewHomePage(
                                     if (existing != null) {
                                         duplicateUrlPending = target
                                         duplicateTitle = existing.videoTitle
+                                    } else if (CONFIGURE.getBoolean() && !target.contains("list=")) {
+                                        fetchSheetUrl = target
+                                        urlText = ""
                                     } else {
                                         dialogViewModel.startDownload(listOf(target))
                                         urlText = ""
@@ -1326,6 +1338,23 @@ fun NewHomePage(
         }
         
         DownloadDialogViewModel.SelectionState.Idle -> {}
+    }
+
+    // Premium fetch preview (auto info + preset/quality selector, bug #1).
+    fetchSheetUrl?.let { pendingUrl ->
+        FetchPreviewSheet(
+            url = pendingUrl,
+            onDismiss = { fetchSheetUrl = null },
+            onDownload = { prefs ->
+                dialogViewModel.postAction(
+                    com.junkfood.seal.ui.page.downloadv2.configure.DownloadDialogViewModel.Action.DownloadWithPreset(
+                        urlList = listOf(pendingUrl),
+                        preferences = prefs,
+                    )
+                )
+                fetchSheetUrl = null
+            },
+        )
     }
 }
 

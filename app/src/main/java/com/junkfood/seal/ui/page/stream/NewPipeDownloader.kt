@@ -10,6 +10,12 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 
 // OkHttp backed Downloader required by NewPipe Extractor. Used for playback only.
 object NewPipeDownloader : Downloader() {
+    // Modern Android Chrome UA: YouTube serves cleaner responses (fewer bot checks and
+    // consent redirects) to mobile Chrome than to the previous desktop Firefox UA.
+    private const val UA =
+        "Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/131.0.0.0 Mobile Safari/537.36"
+
     private val client by lazy {
         OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
     }
@@ -20,7 +26,8 @@ object NewPipeDownloader : Downloader() {
             okhttp3.Request.Builder()
                 .method(request.httpMethod(), body)
                 .url(request.url())
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0")
+                .addHeader("User-Agent", UA)
+                .addHeader("Accept-Language", "en-US,en;q=0.9")
         request.headers().forEach { (name, values) ->
             builder.removeHeader(name)
             values.forEach { builder.addHeader(name, it) }

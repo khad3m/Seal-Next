@@ -11,6 +11,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.util.Log
 import android.os.Build
 import android.os.IBinder
 import androidx.core.content.getSystemService
@@ -51,6 +52,8 @@ import com.junkfood.seal.util.makeToast
 import com.junkfood.seal.util.SDCARD_URI
 import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.VIDEO_DIRECTORY
+import com.junkfood.seal.util.PreferenceUtil.getLong
+import com.junkfood.seal.util.YT_DLP_UPDATE_TIME
 import com.junkfood.seal.util.YT_DLP_VERSION
 import com.tencent.mmkv.MMKV
 import com.yausername.youtubedl_android.YoutubeDL
@@ -162,6 +165,20 @@ class App : Application(), SingletonImageLoader.Factory {
                 WifiQueueManager.ensureRegistered()
                 delay(1500L)
                 runCatching { Engines.yt() }
+
+                // AUTO-UPDATE yt-dlp (throttled to once every 24h). The bundled binary ages
+                // fast — YouTube and other sites change their players constantly, and a stale
+                // extractor is the #1 cause of downloads failing after a while and of
+                // extraction errors that list "missing" pieces. This silently self-updates
+                // the binary in the background (the manual updater in settings still exists
+                // for instant, user-triggered updates).
+                val lastYtdlpUpdate = YT_DLP_UPDATE_TIME.getLong()
+                if (System.currentTimeMillis() - lastYtdlpUpdate > 24 * 60 * 60 * 1000L) {
+                    runCatching { UpdateUtil.updateYtDlp() }
+                        .onFailure {
+                            Log.w("App", "Background yt-dlp auto-update failed: ${it.message}")
+                        }
+                }
             } catch (th: Throwable) {
                 withContext(Dispatchers.Main) { startCrashReportActivity(th) }
             }

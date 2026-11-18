@@ -35,8 +35,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build signed release APKs
-        run: ./gradlew assembleGenericRelease --stacktrace
+      - name: Build signed release APK
+        # -PnoSplits disables per-ABI APK splits so the single output APK targets the
+        # armeabi-v7a ABI configured in gradle.properties (ABI_FILTERS). A 32-bit APK
+        # also installs fine on arm64-v8a devices, so this one file covers every phone.
+        run: ./gradlew assembleGenericRelease -PnoSplits --stacktrace
 
       - name: Extract version name
         id: version
@@ -49,10 +52,10 @@ jobs:
         run: |
           find app/build/outputs/apk -name "*.apk" -type f -exec ls -lh {} \;
 
-      - name: Upload APK artifacts
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SealNext-${{ steps.version.outputs.VERSION }}-apks
+          name: SealNext-${{ steps.version.outputs.VERSION }}-armeabi-v7a
           path: app/build/outputs/apk/generic/release/*.apk
           if-no-files-found: error
 
@@ -70,25 +73,21 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Seal Next v${{ steps.version.outputs.VERSION }}
           body: |
-            ## ✨ Seal Next v1.0.0
+            ## ✨ Seal Next v1.1.0
 
-            The first release of **Seal Next** — a beautiful, modern video & audio downloader for Android built on yt-dlp.
+            **Seal Next** — a beautiful, modern video & audio downloader for Android built on yt-dlp.
 
-            ### 📦 Downloads
+            ### 📦 Download
             | File | Device |
             | --- | --- |
-            | `SealNext-1.0.0-universal.apk` | All devices (recommended) |
-            | `SealNext-1.0.0-arm64-v8a.apk` | Modern 64-bit ARM phones |
-            | `SealNext-1.0.0-armeabi-v7a.apk` | 32-bit ARM phones |
-            | `SealNext-1.0.0-x86_64.apk` | 64-bit x86 devices |
-            | `SealNext-1.0.0-x86.apk` | 32-bit x86 devices |
+            | `SealNext-1.1.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
 
-            ### 🚀 Highlights
-            - Download videos & audio from any yt-dlp supported platform
-            - Material You design with dynamic color & dark mode
-            - Download presets, subtitles, thumbnails & comments
-            - Private downloads, app lock & biometric protection
-            - In-app update checker
+            ### 🚀 What's new in v1.1.0
+            - 🎯 **Premium fetch sheet** — paste a link and instantly see the video info card with download presets & real quality grid
+            - 🛡️ **Reliable downloads** — yt-dlp auto-updates in the background every day, so YouTube & other sites keep working
+            - ▶️ **Solid glassmorphism player** — double-tap to skip, swipe to seek, drag for volume & brightness, auto-hiding glass controls
+            - 🌐 **PWA-style browser** — native launcher cards for YouTube / Instagram / TikTok / Facebook + any address, with a floating expandable action button
+            - 🧠 **Dual-engine playback** — NewPipe Extractor now falls back to the yt-dlp engine, fixing most YouTube "missing …" errors
 
             ---
             **Developer:** [Md Khademul Islam](https://github.com/khad3m) · Licensed under the [MIT License](LICENSE)

@@ -77,14 +77,14 @@ build pipeline that ships fresh, signed APKs on every commit.
 
 | File | Best for |
 | --- | --- |
-| `SealNext-x.y.z-universal.apk` | 📦 All devices — **recommended** |
-| `SealNext-x.y.z-arm64-v8a.apk` | 📱 Modern 64-bit ARM phones (most devices since ~2018) |
-| `SealNext-x.y.z-armeabi-v7a.apk` | 📱 Older 32-bit ARM phones |
-| `SealNext-x.y.z-x86_64.apk` | 💻 Emulators / x86 tablets |
-| `SealNext-x.y.z-x86.apk` | 💻 Older x86 devices |
+| `SealNext-x.y.z-armeabi-v7a.apk` | 📦 **One APK for every phone** — the 32-bit build installs on arm64 devices too (recommended) |
+
+> Since v1.1.0, every release ships a single **armeabi-v7a** APK. It runs on 32-bit phones
+> and on 64-bit devices through ARM's native 32-bit compatibility, so one download covers
+> everything — smaller, faster to build, easier to share.
 
 **Install steps:**
-1. Download the APK for your device from the [Releases](https://github.com/khad3m/Seal-Next/releases/latest) page
+1. Download the APK from the [Releases](https://github.com/khad3m/Seal-Next/releases/latest) page
 2. Open the APK and allow "Install unknown apps" for your browser/file manager if asked
 3. Enjoy! 🔥
 
