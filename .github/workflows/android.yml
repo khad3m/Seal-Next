@@ -59,6 +59,11 @@ jobs:
           path: app/build/outputs/apk/generic/release/*.apk
           if-no-files-found: error
 
+      - name: Create source backup archive
+        # Full, clean snapshot of the repo source (no .git, no build outputs,
+        # no local.properties) attached to every release as a backup asset.
+        run: git archive --format=zip -o "SealNext-${{ steps.version.outputs.VERSION }}-source.zip" HEAD
+
       - name: Read release configuration
         id: release_config
         run: |
@@ -81,6 +86,7 @@ jobs:
             | File | Device |
             | --- | --- |
             | `SealNext-1.1.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
+            | `SealNext-1.1.0-source.zip` | Complete source code backup of this release |
 
             ### 🚀 What's new in v1.1.0
             - 🎯 **Premium fetch sheet** — paste a link and instantly see the video info card with download presets & real quality grid
@@ -93,4 +99,5 @@ jobs:
             **Developer:** [Md Khademul Islam](https://github.com/khad3m) · Licensed under the [MIT License](LICENSE)
           files: |
             app/build/outputs/apk/generic/release/*.apk
+            SealNext-*-source.zip
           makeLatest: true
