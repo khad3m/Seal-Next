@@ -1,0 +1,97 @@
+name: Build Seal Next
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android 37.0 platform & build tools
+        continue-on-error: true
+        run: |
+          yes | sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" > /dev/null 2>&1 || true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build signed release APKs
+        run: ./gradlew assembleGenericRelease --stacktrace
+
+      - name: Extract version name
+        id: version
+        run: |
+          VERSION=$(grep -oP 'versionMajor = \K\d+' buildSrc/src/main/kotlin/Version.kt | head -1).$(grep -oP 'versionMinor = \K\d+' buildSrc/src/main/kotlin/Version.kt | head -1).$(grep -oP 'versionPatch = \K\d+' buildSrc/src/main/kotlin/Version.kt | head -1)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Seal Next version: ${VERSION}"
+
+      - name: List generated APKs
+        run: |
+          find app/build/outputs/apk -name "*.apk" -type f -exec ls -lh {} \;
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SealNext-${{ steps.version.outputs.VERSION }}-apks
+          path: app/build/outputs/apk/generic/release/*.apk
+          if-no-files-found: error
+
+      - name: Read release configuration
+        id: release_config
+        run: |
+          SHOULD_RELEASE=$(jq -r '.release' release.json)
+          echo "SHOULD_RELEASE=${SHOULD_RELEASE}" >> $GITHUB_OUTPUT
+          echo "Release flag: ${SHOULD_RELEASE}"
+
+      - name: Create GitHub Release
+        if: steps.release_config.outputs.SHOULD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: Seal Next v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## ✨ Seal Next v1.0.0
+
+            The first release of **Seal Next** — a beautiful, modern video & audio downloader for Android built on yt-dlp.
+
+            ### 📦 Downloads
+            | File | Device |
+            | --- | --- |
+            | `SealNext-1.0.0-universal.apk` | All devices (recommended) |
+            | `SealNext-1.0.0-arm64-v8a.apk` | Modern 64-bit ARM phones |
+            | `SealNext-1.0.0-armeabi-v7a.apk` | 32-bit ARM phones |
+            | `SealNext-1.0.0-x86_64.apk` | 64-bit x86 devices |
+            | `SealNext-1.0.0-x86.apk` | 32-bit x86 devices |
+
+            ### 🚀 Highlights
+            - Download videos & audio from any yt-dlp supported platform
+            - Material You design with dynamic color & dark mode
+            - Download presets, subtitles, thumbnails & comments
+            - Private downloads, app lock & biometric protection
+            - In-app update checker
+
+            ---
+            **Developer:** [Md Khademul Islam](https://github.com/khad3m) · Licensed under the [MIT License](LICENSE)
+          files: |
+            app/build/outputs/apk/generic/release/*.apk
+          makeLatest: true
