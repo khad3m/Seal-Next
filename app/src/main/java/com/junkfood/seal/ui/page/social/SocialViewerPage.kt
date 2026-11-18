@@ -674,7 +674,7 @@ fun SocialViewerPage(
                                 displayZoomControls = false
                                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                             }
-                            if (WebViewFeature.isFeatureSupported(WebViewFeature.OFF_SCREEN_PRE_RASTER)) {
+                            if (WebViewFeature.isFeatureSupported(WebViewFeature.OFF_SCREEN_PRERASTER)) {
                                 WebSettingsCompat.setOffscreenPreRaster(settings, true)
                             }
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
