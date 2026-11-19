@@ -262,6 +262,12 @@ private fun isPlayableSocialVideoUrl(url: String): Boolean {
     }
 }
 
+// YouTube is native-only: the WebView must never host any youtube.com / youtu.be page.
+private fun isYouTubeHostUrl(url: String): Boolean {
+    val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull().orEmpty()
+    return host.contains("youtube.com") || host.contains("youtu.be")
+}
+
 private fun normalizeBrowserInput(raw: String): String {
     val t = raw.trim()
     if (t.startsWith("http://") || t.startsWith("https://")) return t
@@ -334,8 +340,14 @@ fun SocialViewerPage(
     }
 
     fun maybeInterceptToNativePlayer(url: String, fromSpa: Boolean, wv: WebView?): Boolean {
-        if (!nativePlayerIntercept) return false
-        if (!isPlayableSocialVideoUrl(url)) return false
+        // YouTube never runs inside the WebView: every youtube.com / youtu.be URL —
+        // watch, shorts, channel, search or home — goes to the native player page no
+        // matter what the Web Player toggle says. FB / IG / TikTok keep the toggle.
+        val youTube = isYouTubeHostUrl(url)
+        if (!youTube) {
+            if (!nativePlayerIntercept) return false
+            if (!isPlayableSocialVideoUrl(url)) return false
+        }
         val now = System.currentTimeMillis()
         if (url == lastInterceptedUrl && now - lastInterceptedMs < 3000L) return false
         lastInterceptedUrl = url
@@ -1009,7 +1021,14 @@ fun SocialViewerPage(
                 tabCount = tabs.size,
                 bookmarks = bookmarks,
                 onManualAddressChange = { manualAddress = it },
-                onOpenPlatform = { openUrlInActiveTab(it.homeUrl, it.label) },
+                onOpenPlatform = { platform ->
+                    if (platform == SocialPlatform.YOUTUBE) {
+                        // YouTube is native-only — open the player page, never the WebView.
+                        onOpenInPlayer(platform.homeUrl)
+                    } else {
+                        openUrlInActiveTab(platform.homeUrl, platform.label)
+                    }
+                },
                 onOpenAddress = { raw ->
                     keyboard?.hide()
                     openUrlInActiveTab(normalizeBrowserInput(raw))
@@ -1341,7 +1360,10 @@ private fun BrowserHomeScreen(
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SocialPlatform.entries.filter { it != SocialPlatform.GOOGLE }.chunked(2).forEach { rowPlatforms ->
+            SocialPlatform.entries
+                .filter { it != SocialPlatform.GOOGLE && it != SocialPlatform.YOUTUBE }
+                .chunked(2)
+                .forEach { rowPlatforms ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     rowPlatforms.forEach { platform ->
                         PlatformCard(

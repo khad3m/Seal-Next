@@ -39,6 +39,12 @@ object NewPipeDownloader : Downloader() {
             builder.removeHeader(name)
             values.forEach { builder.addHeader(name, it) }
         }
+        // YouTube EU consent wall: without a consent cookie, search/trending extraction
+        // can bounce off consent.google.com and come back empty. SOCS=CAI is the same
+        // "essential cookies only" consent the NewPipe app itself sends.
+        val hasCookie = request.headers().any { it.key.equals("Cookie", ignoreCase = true) }
+        val ytUrl = request.url().contains("youtube.com") || request.url().contains("youtu.be")
+        if (ytUrl && !hasCookie) builder.addHeader("Cookie", "SOCS=CAI")
         client.newCall(builder.build()).execute().use { resp ->
             if (resp.code == 429) throw ReCaptchaException("reCaptcha challenge", request.url())
             return Response(

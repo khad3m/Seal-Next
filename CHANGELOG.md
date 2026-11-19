@@ -8,6 +8,16 @@ Technicalss). For the full history before v1.0.0, see the upstream
 [Seal changelog](https://github.com/JunkFood02/Seal/blob/main/CHANGELOG.md) and
 [Seal Plus changelog](https://github.com/MaheshTechnicals/Sealplus/blob/main/CHANGELOG.md).
 
+## [1.4.0] – 2026-11-19
+
+The native-YouTube release — YouTube is now fully native, developed and maintained by **Md Khademul Islam**.
+
+### ▶️ Native YouTube (NewPipe Extractor)
+* **YouTube never opens in the WebView anymore** — every youtube.com / youtu.be link (watch, shorts, channel, search or home) is handed straight to the native player page; the Web Player toggle now only applies to Facebook / Instagram / TikTok, and the YouTube tab is gone from the browser home grid
+* **Trending feed on open** — the player page now loads YouTube's trending list by default (via the NewPipe Extractor kiosk), so it behaves like the native YouTube app before you type anything; a search typed while trending loads always wins
+* **Search fallback** — if the NewPipe search gets bot/consent-walled, the app silently retries the same query through yt-dlp's `ytsearch` (flat playlist) instead of showing an empty result
+* **EU consent cookie** — NPE requests now carry the `SOCS` consent cookie, so search/trending no longer bounce off the consent wall on EU networks
+
 ## [1.3.0] – 2026-11-19
 
 The stability release — eight user-reported bugs fixed, developed and maintained by **Md Khademul Islam**.

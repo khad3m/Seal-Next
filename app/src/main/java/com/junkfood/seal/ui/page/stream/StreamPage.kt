@@ -98,6 +98,10 @@ import com.junkfood.seal.ui.theme.GradientDarkColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import com.junkfood.seal.util.Engines
+import com.yausername.youtubedl_android.YoutubeDLRequest
+import org.json.JSONArray
+import org.json.JSONObject
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -115,7 +119,19 @@ private data class StreamRequest(val value: String, val nonce: Long)
 
 private fun looksLikeStreamUrl(input: String): Boolean = extractStreamUrl(input) != null
 
-private suspend fun searchYouTube(query: String): List<SearchResultItem> =
+private const val TRENDING_TRIGGER = "__trending__"
+
+private fun mapStreamItem(item: StreamInfoItem): SearchResultItem =
+    SearchResultItem(
+        title = item.name.orEmpty(),
+        uploader = item.uploaderName.orEmpty(),
+        url = normalizeYouTubeStreamUrl(item.url.orEmpty()),
+        durationSec = item.duration,
+        viewCount = item.viewCount,
+        thumbnailUrl = item.thumbnails.lastOrNull()?.url,
+    )
+
+private suspend fun searchYouTubeNpe(query: String): List<SearchResultItem> =
     withContext(Dispatchers.IO) {
         ensureNewPipeReady()
         val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query.trim())
@@ -124,16 +140,70 @@ private suspend fun searchYouTube(query: String): List<SearchResultItem> =
             .filterIsInstance<StreamInfoItem>()
             .filter { !it.url.isNullOrBlank() }
             .take(20)
-            .map { item ->
-                SearchResultItem(
-                    title = item.name.orEmpty(),
-                    uploader = item.uploaderName.orEmpty(),
-                    url = normalizeYouTubeStreamUrl(item.url.orEmpty()),
-                    durationSec = item.duration,
-                    viewCount = item.viewCount,
-                    thumbnailUrl = item.thumbnails.lastOrNull()?.url,
-                )
+            .map(::mapStreamItem)
+    }
+
+// Fallback path: NewPipe Extractor can get bot/consent-walled on some networks. yt-dlp's
+// `ytsearchN:` pseudo-URL with --flat-playlist returns the same results without a WebView.
+private suspend fun searchYouTubeViaYtDlp(query: String): List<SearchResultItem> =
+    withContext(Dispatchers.IO) {
+        val request =
+            YoutubeDLRequest("ytsearch20:${query.trim()}").apply {
+                addOption("--flat-playlist")
+                addOption("--dump-single-json")
+                addOption("--no-warnings")
+                addOption("--socket-timeout", "15")
             }
+        val response = Engines.yt().execute(request)
+        val entries = JSONObject(response.out).optJSONArray("entries") ?: JSONArray()
+        (0 until entries.length()).mapNotNull { i ->
+            val entry = entries.optJSONObject(i) ?: return@mapNotNull null
+            val url = entry.optString("url", "").ifBlank { entry.optString("webpage_url", "") }
+            if (url.isBlank()) return@mapNotNull null
+            SearchResultItem(
+                title = entry.optString("title", url),
+                uploader = entry.optString("uploader", "").ifBlank { entry.optString("channel", "") },
+                url = normalizeYouTubeStreamUrl(url),
+                durationSec = entry.optDouble("duration", 0.0).toLong().coerceAtLeast(0L),
+                viewCount = entry.optLong("view_count", 0L).coerceAtLeast(0L),
+                thumbnailUrl = thumbnailFromFlatEntry(entry),
+            )
+        }
+    }
+
+private fun thumbnailFromFlatEntry(entry: JSONObject): String? {
+    val thumbs = entry.optJSONArray("thumbnails")
+    if (thumbs != null) {
+        for (i in thumbs.length() - 1 downTo 0) {
+            thumbs.optJSONObject(i)?.optString("url", "")?.takeIf { it.startsWith("http") }
+                ?.let { return it }
+        }
+    }
+    return entry.optString("thumbnail", "").takeIf { it.startsWith("http") }
+}
+
+// NPE first (fast, on-device); on failure or an empty SERP fall back to yt-dlp search.
+private suspend fun searchYouTube(query: String): List<SearchResultItem> =
+    withContext(Dispatchers.IO) {
+        val npeResult = runCatching { searchYouTubeNpe(query) }
+        val npeItems = npeResult.getOrNull().orEmpty()
+        if (npeItems.isNotEmpty()) return@withContext npeItems
+        runCatching { searchYouTubeViaYtDlp(query) }
+            .getOrElse { throw npeResult.exceptionOrNull() ?: it }
+    }
+
+// Native YouTube feel: the player page's default feed is YouTube's trending kiosk
+// (NewPipe Extractor), so the page is useful before a single character is typed.
+private suspend fun fetchTrendingYouTube(): List<SearchResultItem> =
+    withContext(Dispatchers.IO) {
+        ensureNewPipeReady()
+        val extractor = ServiceList.YouTube.kioskList.defaultKioskExtractor
+        extractor.fetchPage()
+        extractor.initialPage.items
+            .filterIsInstance<StreamInfoItem>()
+            .filter { !it.url.isNullOrBlank() }
+            .take(20)
+            .map(::mapStreamItem)
     }
 
 private fun formatDuration(sec: Long): String =
@@ -168,6 +238,8 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
     var searchResults by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
     var playRequest by remember { mutableStateOf<StreamRequest?>(null) }
     var searchRequest by remember { mutableStateOf<StreamRequest?>(null) }
+    var trendingRequest by remember { mutableStateOf<StreamRequest?>(null) }
+    var feedLabel by remember { mutableStateOf("Trending now") }
     var selectedVariant by remember { mutableIntStateOf(0) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isFullscreen by remember { mutableStateOf(false) }
@@ -182,6 +254,14 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
         val target = initialUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         input = target
         playRequest = StreamRequest(target, System.nanoTime())
+    }
+
+    // Opened with no target link (drawer "YouTube Player") → load the trending feed so
+    // the page behaves like the native YouTube app instead of an empty search box.
+    LaunchedEffect(Unit) {
+        if (initialUrl.isNullOrBlank() && input.isBlank()) {
+            trendingRequest = StreamRequest(TRENDING_TRIGGER, System.nanoTime())
+        }
     }
 
     val player = remember { MiniPlayerManager.getOrCreatePlayer(context) }
@@ -280,10 +360,36 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                                 "Try different wording or paste a direct link."
                     } else {
                         searchResults = results
+                        feedLabel = "Search results"
                     }
                 }
                 .onFailure { th ->
                     if (th !is kotlinx.coroutines.CancellationException) {
+                        error = friendlyStreamError(th)
+                    }
+                }
+        } finally {
+            loading = false
+        }
+    }
+
+    LaunchedEffect(trendingRequest) {
+        val req = trendingRequest ?: return@LaunchedEffect
+        if (req.value != TRENDING_TRIGGER) return@LaunchedEffect
+        loading = true
+        error = null
+        try {
+            runCatching { withTimeout(45_000L) { fetchTrendingYouTube() } }
+                .onSuccess { results ->
+                    // A search typed while trending was loading wins — never overwrite it.
+                    if (results.isNotEmpty() && searchResults.isEmpty()) {
+                        searchResults = results
+                        feedLabel = "Trending now"
+                    }
+                }
+                .onFailure { th ->
+                    // Soft-fail: trending is a bonus feed; it must never block manual use.
+                    if (th !is kotlinx.coroutines.CancellationException && searchResults.isEmpty()) {
                         error = friendlyStreamError(th)
                     }
                 }
@@ -306,7 +412,7 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "Search YouTube or paste YT / IG / TikTok / FB link",
+                            text = "Native YouTube — search & trending (no WebView for YouTube)",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -640,9 +746,9 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
 
             if (searchResults.isNotEmpty()) {
                 item {
-                    Text(
-                        text = "Search Results",
-                        style = MaterialTheme.typography.titleMedium,
+                        Text(
+                            text = feedLabel,
+                            style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
