@@ -149,11 +149,10 @@ fun AppEntry(dialogViewModel: DownloadDialogViewModel) {
         }
     }
 
-    if (sheetState is DownloadDialogViewModel.SheetState.Configure) {
-        if (navController.currentDestination?.route != Route.HOME) {
-            navController.popBackStack(route = Route.HOME, inclusive = false, saveState = true)
-        }
-    }
+    // bug #4: the old block here force-popped the nav stack back to HOME whenever the
+    // download dialog was in the Configure state. Any navigation attempt (drawer, stream,
+    // gallery…) silently snapped back, so with the sheet open "nothing on screen worked".
+    // The dialog is a global overlay and doesn't need this correction — removed.
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
     var currentTopDestination by rememberSaveable { mutableStateOf(currentRoute) }

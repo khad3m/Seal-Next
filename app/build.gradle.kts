@@ -45,7 +45,7 @@ android {
         applicationId = "com.khad3m.sealnext"
         minSdk = 24
         targetSdk = 37
-        versionCode = 102_000_400
+        versionCode = 103_000_400
         check(versionCode == currentVersionCode)
 
         versionName = baseVersionName

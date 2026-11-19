@@ -52,7 +52,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -82,6 +81,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -96,6 +97,7 @@ import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.theme.GradientDarkColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -171,7 +173,10 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
     var isFullscreen by remember { mutableStateOf(false) }
     var isAudioMode by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
-    var isLandscapeVideo by remember { mutableStateOf(true) }
+    // bug #3: default to PORTRAIT until the real video size arrives. The old default of
+    // `true` forced landscape for vertical videos whenever fullscreen was tapped before
+    // the first frame, then flipped to portrait — exactly the reported crash.
+    var isLandscapeVideo by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialUrl) {
         val target = initialUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
@@ -229,33 +234,62 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
         }
     }
 
+    // bug #5: hard 45 s deadline on stream resolution. resolveStreamForPlayer blocks on
+    // NewPipe HTTP and on the yt-dlp process; without a timeout a bot-wall or cookie-wall
+    // (or a hung yt-dlp) pinned `loading == true` forever and the player never recovered.
+    // try/finally keeps `loading` correct even on cancellation.
     LaunchedEffect(playRequest) {
         val req = playRequest ?: return@LaunchedEffect
         loading = true
         error = null
         playerError = null
+        searchResults = emptyList()
         player.stop()
-        runCatching { resolveStreamForPlayer(req.value) }
-            .onSuccess {
-                source = it
-                selectedVariant = 0
-                playVariant(it.variants[0], keepPos = false, srcMeta = it)
-            }
-            .onFailure {
-                source = null
-                error = it.message ?: "Could not load stream"
-            }
-        loading = false
+        try {
+            runCatching { withTimeout(45_000L) { resolveStreamForPlayer(req.value) } }
+                .onSuccess {
+                    source = it
+                    selectedVariant = 0
+                    playVariant(it.variants[0], keepPos = false, srcMeta = it)
+                }
+                .onFailure { th ->
+                    source = null
+                    if (th !is kotlinx.coroutines.CancellationException) {
+                        error = friendlyStreamError(th)
+                    }
+                }
+        } finally {
+            loading = false
+        }
     }
 
     LaunchedEffect(searchRequest) {
         val req = searchRequest ?: return@LaunchedEffect
         loading = true
         error = null
-        runCatching { searchYouTube(req.value) }
-            .onSuccess { searchResults = it }
-            .onFailure { error = friendlyStreamError(it) }
-        loading = false
+        searchResults = emptyList()
+        try {
+            runCatching { withTimeout(45_000L) { searchYouTube(req.value) } }
+                .onSuccess { results ->
+                    // bug #6: an empty result (bot/consent walls often return an empty
+                    // SERP) used to be silent — now it shows a clear message instead of
+                    // looking like the search did nothing.
+                    if (results.isEmpty()) {
+                        error =
+                            "No results found — YouTube may be rate-limiting this network. " +
+                                "Try different wording or paste a direct link."
+                    } else {
+                        searchResults = results
+                    }
+                }
+                .onFailure { th ->
+                    if (th !is kotlinx.coroutines.CancellationException) {
+                        error = friendlyStreamError(th)
+                    }
+                }
+        } finally {
+            loading = false
+        }
     }
 
     val backgroundColor =
@@ -412,7 +446,12 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                                 ),
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            if (!isAudioMode) {
+                            // bug #3: render the inline PlayerView only when NOT in
+                            // fullscreen. Previously both the inline view and the fullscreen
+                            // Dialog attached PlayerViews to the same ExoPlayer — the dialog
+                            // stole the video surface and dismissal left it pointing at a
+                            // destroyed window surface, crashing on codec re-init.
+                            if (!isAudioMode && !isFullscreen) {
                                 GlassPlayerSurface(
                                     player = player,
                                     title = src.title,
@@ -428,7 +467,7 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                                     },
                                     onEnterFullscreen = { isFullscreen = true },
                                 )
-                            } else {
+                            } else if (isAudioMode) {
                                 Row(
                                     modifier =
                                         Modifier.fillMaxWidth()
@@ -596,33 +635,8 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                 }
             }
 
-            if (source == null && searchResults.isEmpty() && !loading) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Quick Discover",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            listOf("Lofi Beats", "4K Nature", "Tech Review", "Islamic Nasheed", "Podcast")
-                                .forEach { topic ->
-                                    SuggestionChip(
-                                        onClick = {
-                                            input = topic
-                                            searchRequest = StreamRequest(topic, System.nanoTime())
-                                        },
-                                        label = { Text(topic) },
-                                    )
-                                }
-                        }
-                    }
-                }
-            }
+            // bug #6: the "Quick Discover" hardcoded suggestion chips were removed
+            // entirely per user request.
 
             if (searchResults.isNotEmpty()) {
                 item {
@@ -712,13 +726,22 @@ fun StreamPage(onNavigateBack: () -> Unit, initialUrl: String? = null) {
                     decorFitsSystemWindows = false,
                 ),
         ) {
-            val activity = context as? Activity
-            DisposableEffect(isLandscapeVideo) {
-                val window = activity?.window
-                val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+            // bug #3: ONE orientation decision per fullscreen session. The old effect was
+            // keyed on isLandscapeVideo, so every aspect-ratio change (HLS variant switch,
+            // embedded ad) re-fired it and thrashed requestedOrientation mid-playback —
+            // codec/surface re-init + window resize at the same time = the crash window.
+            // Also: hide system bars on the DIALOG window (the player lives in the Dialog's
+            // own window; hiding bars on the activity window did nothing in fullscreen).
+            val dialogWindow =
+                (LocalView.current.parent as? DialogWindowProvider)?.window
+                    ?: (context as? Activity)?.window
+            DisposableEffect(Unit) {
+                val controller =
+                    dialogWindow?.let { WindowCompat.getInsetsController(it, it.decorView) }
                 controller?.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller?.hide(WindowInsetsCompat.Type.systemBars())
+                val activity = context as? Activity
                 activity?.requestedOrientation =
                     if (isLandscapeVideo) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

@@ -268,6 +268,9 @@ fun DownloadPageV2(
                             ?: state?.viewState?.title
                             ?: task.url
                     FileUtil.deleteTempFilesForTask(baseName, state?.videoInfo?.id)
+                    // bug #7: cancel any running process before removing so the
+                    // yt-dlp/aria2c subprocess can't survive as an orphan.
+                    runCatching { downloader.cancel(task) }
                     downloader.remove(task)
                 }
             }

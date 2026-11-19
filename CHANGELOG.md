@@ -8,6 +8,28 @@ Technicalss). For the full history before v1.0.0, see the upstream
 [Seal changelog](https://github.com/JunkFood02/Seal/blob/main/CHANGELOG.md) and
 [Seal Plus changelog](https://github.com/MaheshTechnicals/Sealplus/blob/main/CHANGELOG.md).
 
+## [1.3.0] – 2026-11-19
+
+The stability release — eight user-reported bugs fixed, developed and maintained by **Md Khademul Islam**.
+
+### 🧹 Fetch & Home
+* **Clipboard auto-fetch removed** — the app no longer reads the clipboard on open/resume and the auto-detect banner is gone; paste only happens when you tap paste
+* **Fetch deadlock fixed** — a hung fetch used to pin the modal sheet forever and the whole screen stopped responding. Fetches now have a hard 60 s deadline, shared links can't re-open the sheet out of nowhere, a navigation hijack while the download dialog was open was removed, and stale format/playlist pages reset on close
+
+### 📥 Downloads
+* **Facebook & other tricky sites** — when a fetch fails with an extraction error (public Facebook reels included), the app now silently updates the yt-dlp engine once and retries before showing an error
+* **No more zombie processes** — deleting an active download now cancels its yt-dlp/aria2c process first (with a safety net in the engine), so nothing keeps burning RAM after the task is gone
+
+### ▶️ Player
+* **Fullscreen crash fixed** — the inline and fullscreen views both attached to the same ExoPlayer and the fullscreen dialog thrashed screen orientation on every aspect change; now there is exactly one player view and one orientation decision per fullscreen session, and vertical videos no longer get forced landscape
+* **Brightness gesture fixed** — it now targets the window that actually shows the player (the fullscreen dialog window), vertical drags no longer lose the gesture race to the seek detector, and the brightness override resets when the player closes
+* **Stuck loading fixed** — stream resolution has a 45 s deadline with network-level call timeouts, so the player never hangs on "loading" forever
+* **Quick Discover chips removed**; YouTube search now clears stale results, shows a clear "no results" message, and has the same timeout protection
+
+### 🔋 Memory & Performance
+* **Device-hang fixes** — a Wi-Fi reconnect no longer spawns every queued download at once (staggered + respects the network preference), a yt-dlp update no longer spins up the foreground service, a low-memory callback no longer permanently kills the download engine, and the v1 progress pipeline is throttled (200 ms UI / 750 ms notification) like the v2 engine
+* Trim-dialog video duration is now read off the main thread; per-line download logging is throttled
+
 ## [1.2.0] – 2026-11-18
 
 The self-updating release, developed and maintained by **Md Khademul Islam**.
@@ -58,6 +80,7 @@ The premium experience release, developed and maintained by **Md Khademul Islam*
 ### 📦 Distribution
 * **armeabi-v7a only** — every release now ships one 32-bit signed APK that installs on 32-bit and 64-bit devices alike
 
+[1.3.0]: https://github.com/khad3m/Seal-Next/releases/tag/v1.3.0
 [1.2.0]: https://github.com/khad3m/Seal-Next/releases/tag/v1.2.0
 [1.1.0]: https://github.com/khad3m/Seal-Next/releases/tag/v1.1.0
 

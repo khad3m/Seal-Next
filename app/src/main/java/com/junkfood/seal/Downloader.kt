@@ -170,7 +170,10 @@ object Downloader {
                     if (cnt > 0) true
                     else
                         when (state) {
+                            // bug #7: a yt-dlp binary update (State.Updating) no longer
+                            // spins up the foreground download service with zero tasks.
                             is State.Idle -> false
+                            is State.Updating -> false
                             else -> true
                         }
                 }
@@ -386,6 +389,13 @@ object Downloader {
         Log.d(TAG, "notificationId: $notificationId")
 
         NotificationUtil.notifyProgress(notificationId = notificationId, title = videoInfo.title)
+        // bug #8: throttle the per-line progress callback. yt-dlp emits a status line
+        // several times a second; unthrottled this caused a state write + notification
+        // Binder IPC per line, freezing menus on low-end ROMs. The v2 engine already
+        // throttles (200 ms UI / 750 ms notification) — mirror that here.
+        var lastUiUpdate = 0L
+        var lastNotificationUpdate = 0L
+        var lastNotifiedProgress = -1
         return DownloadUtil.downloadVideo(
                 videoInfo = videoInfo,
                 playlistUrl = playlistUrl,
@@ -393,15 +403,27 @@ object Downloader {
                 downloadPreferences = preferences,
                 taskId = videoInfo.id + preferences.hashCode(),
             ) { progress, _, line ->
-                Log.d(TAG, line)
-                mutableTaskState.update { it.copy(progress = progress, progressText = line) }
-                NotificationUtil.notifyProgress(
-                    notificationId = notificationId,
-                    progress = progress.toInt(),
-                    text = line,
-                    title = videoInfo.title,
-                    taskId = taskId,
-                )
+                val now = System.currentTimeMillis()
+                if (now - lastUiUpdate >= 200L || progress >= 100f) {
+                    lastUiUpdate = now
+                    Log.d(TAG, line)
+                    mutableTaskState.update { it.copy(progress = progress, progressText = line) }
+                }
+                if (now - lastNotificationUpdate >= 750L || progress >= 100f) {
+                    val pct = progress.toInt()
+                    lastNotificationUpdate = now
+                    // Skip no-op notification rewrites at the same percentage.
+                    if (pct != lastNotifiedProgress) {
+                        lastNotifiedProgress = pct
+                        NotificationUtil.notifyProgress(
+                            notificationId = notificationId,
+                            progress = pct,
+                            text = line,
+                            title = videoInfo.title,
+                            taskId = taskId,
+                        )
+                    }
+                }
             }
             .onFailure {
                 manageDownloadError(

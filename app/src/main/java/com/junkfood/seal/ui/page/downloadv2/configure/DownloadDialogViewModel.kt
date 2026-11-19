@@ -278,6 +278,10 @@ class DownloadDialogViewModel(private val downloader: DownloaderV2) : ViewModel(
 
     private fun hideDialog() {
         mSheetValueFlow.update { SheetValue.Hidden }
+        // bug #4: reset any lingering format/playlist selection so a stale FormatPage or
+        // PlaylistSelectionPage can't remain attached to the hidden sheet and re-appear
+        // (or silently block the UI) the next time a sheet opens.
+        resetSelectionState()
         when (sheetState) {
             is SheetState.Loading -> {
                 cancel()

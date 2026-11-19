@@ -207,7 +207,10 @@ class App : Application(), SingletonImageLoader.Factory {
     override fun onLowMemory() {
         super.onLowMemory()
         LowRamOptimizer.clearAllCaches(this)
-        GlobalContext.getOrNull()?.get<DownloaderV2>()?.cleanup()
+        // bug #7: do NOT call DownloaderV2.cleanup() here. cleanup() permanently cancels
+        // the engine's supervisor scope, so every enqueue after a single low-memory
+        // callback silently did nothing (the app looked frozen). Cache trims above are
+        // enough to relieve memory pressure.
     }
 
     override fun onTrimMemory(level: Int) {

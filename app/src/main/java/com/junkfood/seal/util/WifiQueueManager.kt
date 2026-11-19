@@ -10,6 +10,7 @@ import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -80,7 +81,14 @@ object WifiQueueManager {
         if (items.isEmpty()) return
         saveQueue(emptyList())
         scope.launch {
-            items.forEach { Downloader.getInfoAndDownload(it) }
+            items.forEach { url ->
+                // bug #7: respect the network restriction preference, and stagger the
+                // flush so a reconnect doesn't spawn N yt-dlp processes at once (which
+                // spiked RAM/CPU and hung low-end devices).
+                if (!PreferenceUtil.isNetworkAvailableForDownload()) return@launch
+                Downloader.getInfoAndDownload(url)
+                delay(2000L)
+            }
         }
     }
 

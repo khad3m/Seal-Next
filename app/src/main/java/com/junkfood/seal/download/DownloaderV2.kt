@@ -349,12 +349,18 @@ class DownloaderV2Impl(private val appContext: Context) : DownloaderV2, KoinComp
     }
 
     /**
-     * Noted the caller is responsible for stopping the [task] before removing it
+     * Removes the task. As a safety net (bug #7), if the task is still running the
+     * underlying yt-dlp process is destroyed first — callers that forgot to cancel
+     * would otherwise leave an orphaned python/aria2c process burning RAM forever.
      *
      * @return true if the task was removed
      */
     override fun remove(task: Task): Boolean {
         if (taskStateMap.contains(task)) {
+            val downloadState = taskStateMap[task]?.downloadState
+            if (downloadState is DownloadState.Running || downloadState is DownloadState.FetchingInfo) {
+                runCatching { task.cancelImpl() }.onFailure { it.printStackTrace() }
+            }
             taskStateMap.remove(task)
             return true
         }

@@ -68,6 +68,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -91,6 +92,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.platform.LocalView
 import coil3.compose.AsyncImage
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -472,16 +475,39 @@ fun GlassPlayerSurface(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    // bug #3: brightness/volume gestures must target the window that actually displays
+    // the player. In fullscreen the player lives inside a Compose Dialog (its own
+    // window) — writing screenBrightness on the activity window did nothing because the
+    // focused dialog window sits on top.
+    val playerWindow =
+        (LocalView.current.parent as? DialogWindowProvider)?.window ?: activity?.window
+    // bug #3: don't leave a stuck brightness override behind after the player closes.
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching {
+                val w = playerWindow ?: return@runCatching
+                val attrs = w.attributes
+                attrs.screenBrightness =
+                    android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                w.attributes = attrs
+            }
+        }
+    }
     val ui by produceState(StreamPlayerUiSnapshot(), player) {
         while (true) {
-            value =
-                StreamPlayerUiSnapshot(
-                    isPlaying = player.isPlaying,
-                    isBuffering = player.playbackState == Player.STATE_BUFFERING,
-                    positionMs = player.currentPosition.coerceAtLeast(0L),
-                    durationMs = player.duration.coerceAtLeast(0L),
-                    bufferedMs = player.bufferedPosition.coerceAtLeast(0L),
-                )
+            // bug #3: the player can be released by MiniPlayerManager / route changes
+            // while this poll loop is still composed — guard every access so a released
+            // player throws no IllegalStateException into composition.
+            runCatching {
+                value =
+                    StreamPlayerUiSnapshot(
+                        isPlaying = player.isPlaying,
+                        isBuffering = player.playbackState == Player.STATE_BUFFERING,
+                        positionMs = player.currentPosition.coerceAtLeast(0L),
+                        durationMs = player.duration.coerceAtLeast(0L),
+                        bufferedMs = player.bufferedPosition.coerceAtLeast(0L),
+                    )
+            }
             delay(250L)
         }
     }
@@ -505,7 +531,7 @@ fun GlassPlayerSurface(
     // Periodically persist playback position for Playback Resume
     LaunchedEffect(sourceUrl, ui.isPlaying) {
         while (sourceUrl.isNotBlank() && ui.isPlaying) {
-            PlaybackResumeStore.save(sourceUrl, player.currentPosition, player.duration)
+            runCatching { PlaybackResumeStore.save(sourceUrl, player.currentPosition, player.duration) }
             delay(3000L)
         }
     }
@@ -613,40 +639,17 @@ fun GlassPlayerSurface(
                         }
                     }
                     .pointerInput(isLocked) {
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                if (!isLocked && ui.durationMs > 0) scrubTargetMs = ui.positionMs
-                            },
-                            onDragEnd = {
-                                if (!isLocked && scrubTargetMs >= 0) player.seekTo(scrubTargetMs)
-                                scrubTargetMs = -1L
-                                gestureHud = StreamGestureHud.None
-                            },
-                            onDragCancel = {
-                                scrubTargetMs = -1L
-                                gestureHud = StreamGestureHud.None
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                if (isLocked) return@detectHorizontalDragGestures
-                                change.consume()
-                                if (ui.durationMs > 0) {
-                                    val step = dragAmount / size.width * ui.durationMs
-                                    scrubTargetMs =
-                                        ((if (scrubTargetMs < 0) ui.positionMs else scrubTargetMs) + step.toLong())
-                                            .coerceIn(0L, ui.durationMs)
-                                    gestureHud = StreamGestureHud.Seek
-                                }
-                            },
-                        )
-                    }
-                    .pointerInput(isLocked) {
+                        // bug #3: vertical (brightness/volume) is registered BEFORE the
+                        // horizontal seek detector — when it came second, drags with a
+                        // slight horizontal bias lost the slop race and brightness never
+                        // triggered at all.
                         detectVerticalDragGestures(
                             onVerticalDrag = { change, dragAmount ->
                                 if (isLocked) return@detectVerticalDragGestures
                                 change.consume()
                                 when {
                                     change.position.x < size.width / 2f -> {
-                                        val window = activity?.window ?: return@detectVerticalDragGestures
+                                        val window = playerWindow ?: return@detectVerticalDragGestures
                                         val attrs = window.attributes
                                         val current =
                                             if (attrs.screenBrightness < 0f) 0.5f else attrs.screenBrightness
@@ -675,6 +678,33 @@ fun GlassPlayerSurface(
                             },
                             onDragEnd = { gestureHud = StreamGestureHud.None },
                             onDragCancel = { gestureHud = StreamGestureHud.None },
+                        )
+                    }
+                    .pointerInput(isLocked) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                if (!isLocked && ui.durationMs > 0) scrubTargetMs = ui.positionMs
+                            },
+                            onDragEnd = {
+                                if (!isLocked && scrubTargetMs >= 0) player.seekTo(scrubTargetMs)
+                                scrubTargetMs = -1L
+                                gestureHud = StreamGestureHud.None
+                            },
+                            onDragCancel = {
+                                scrubTargetMs = -1L
+                                gestureHud = StreamGestureHud.None
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                if (isLocked) return@detectHorizontalDragGestures
+                                change.consume()
+                                if (ui.durationMs > 0) {
+                                    val step = dragAmount / size.width * ui.durationMs
+                                    scrubTargetMs =
+                                        ((if (scrubTargetMs < 0) ui.positionMs else scrubTargetMs) + step.toLong())
+                                            .coerceIn(0L, ui.durationMs)
+                                    gestureHud = StreamGestureHud.Seek
+                                }
+                            },
                         )
                     }
         )

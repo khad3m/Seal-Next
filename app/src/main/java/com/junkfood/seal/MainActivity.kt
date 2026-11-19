@@ -49,9 +49,16 @@ class MainActivity : AppCompatActivity() {
         }
         enableEdgeToEdge()
 
-        // Handle shared URL from intent on cold launch
+        // Handle shared URL from intent on cold launch.
+        // bug #4: on activity recreate (e.g. security re-auth on resume) the SAME intent
+        // re-seeds the shared URL, which re-opened the paste-URL sheet out of nowhere and
+        // made the home screen look frozen behind the modal scrim. De-duplicate: only seed
+        // when this URL has not already been handed to the ViewModel.
         intent.getSharedURL()?.let { url ->
-            dialogViewModel.setSharedUrl(url)
+            if (url != sharedUrlCached) {
+                sharedUrlCached = url
+                dialogViewModel.setSharedUrl(url)
+            }
         }
         
         setContent {
@@ -138,7 +145,8 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val url = intent.getSharedURL()
-        if (url != null) {
+        if (url != null && url != sharedUrlCached) {
+            sharedUrlCached = url
             dialogViewModel.setSharedUrl(url)
         }
     }

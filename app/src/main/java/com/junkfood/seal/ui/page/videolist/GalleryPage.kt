@@ -1697,9 +1697,19 @@ private fun FullscreenGalleryViewer(
     }
 
     if (showTrimDialog) {
-        val totalMs = remember(currentFile) { MediaProcessor.getDurationMs(currentFile).coerceAtLeast(1000L) }
-        val totalSec = (totalMs / 1000f).coerceAtLeast(1f)
-        var range by remember(currentFile) { mutableStateOf(0f..totalSec) }
+        // bug #8: MediaProcessor.getDurationMs runs MediaExtractor on disk — move it off
+        // the main thread (it used to run synchronously inside remember{} while the
+        // trim dialog composed, janking the UI on large videos).
+        var totalMs by remember(currentFile) { mutableStateOf(0L) }
+        LaunchedEffect(currentFile) {
+            totalMs =
+                withContext(Dispatchers.IO) {
+                    MediaProcessor.getDurationMs(currentFile).coerceAtLeast(1000L)
+                }
+        }
+        val effectiveTotalMs = if (totalMs > 0L) totalMs else 1000L
+        val totalSec = (effectiveTotalMs / 1000f).coerceAtLeast(1f)
+        var range by remember(currentFile, totalMs) { mutableStateOf(0f..totalSec) }
         var busy by remember { mutableStateOf(false) }
 
         AlertDialog(

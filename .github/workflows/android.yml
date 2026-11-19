@@ -78,22 +78,24 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Seal Next v${{ steps.version.outputs.VERSION }}
           body: |
-            ## ✨ Seal Next v1.2.0
+            ## ✨ Seal Next v1.3.0
 
             **Seal Next** — a beautiful, modern video & audio downloader for Android built on yt-dlp.
 
             ### 📦 Download
             | File | Device |
             | --- | --- |
-            | `SealNext-1.2.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
-            | `SealNext-1.2.0-source.zip` | Complete source code backup of this release |
+            | `SealNext-1.3.0-armeabi-v7a.apk` | All Android phones — a 32-bit APK installs on arm64 devices too (recommended) |
+            | `SealNext-1.3.0-source.zip` | Complete source code backup of this release |
 
-            ### 🚀 What's new in v1.2.0
-            - 🔄 **In-app updates** — the app now checks for new releases on launch and downloads & installs the update APK with one tap (Settings → About → Check for Updates for a manual check)
-            - 🌐 **Browser history & bookmarks** — visited pages and saved sites persist between sessions
-            - ▶️ **Picture-in-Picture + playback resume** — shrink the player to a floating window and pick up exactly where you stopped
-            - 🧠 **Smarter YouTube playback** — normalized stream URLs and quality variants built from the video's real formats, NewPipe with yt-dlp fallback
-            - 🏠 **Home polish** — cards, details dialogs and the glowing action button refactored into dedicated components
+            ### 🚀 What's new in v1.3.0 — the stability release
+            - 🧹 **Clipboard auto-fetch removed** — paste only when you tap paste; no more surprise pop-ups on open
+            - 🛠️ **Fetch deadlock fixed** — a hard deadline on fetches plus state resets, so the paste-URL sheet can never freeze the whole screen again
+            - 📥 **Facebook reels & tricky sites** — on extraction failure the app silently updates the yt-dlp engine and retries once before giving up
+            - ▶️ **Player crash fixed** — fullscreen/landscape no longer crashes (single player view, single orientation decision), vertical videos stay portrait until the real size is known
+            - 💡 **Brightness gesture fixed** — works in fullscreen now, and the seek gesture no longer steals vertical drags
+            - ⏳ **"Loading forever" fixed** — stream resolution gets a 45 s deadline with hard network timeouts; Quick Discover chips removed
+            - 🔋 **Device-hang fixed** — deleting downloads kills their processes, Wi-Fi reconnect no longer spawns everything at once, and the download engine survives low-memory callbacks
 
             ---
             **Developer:** [Md Khademul Islam](https://github.com/khad3m) · Licensed under the [MIT License](LICENSE)

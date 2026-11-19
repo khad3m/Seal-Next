@@ -77,10 +77,12 @@ import com.junkfood.seal.ui.common.LocalDarkTheme
 import com.junkfood.seal.ui.common.LocalGradientDarkMode
 import com.junkfood.seal.ui.theme.GradientDarkColors
 import com.junkfood.seal.util.DownloadUtil
+import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.VideoInfo
 import com.junkfood.seal.util.PlaylistResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /**
  * Premium fetch sheet shown when a link is submitted from the home screen with
@@ -110,6 +112,8 @@ fun FetchPreviewSheet(
     var playlistInfo by remember(url) { mutableStateOf<PlaylistResult?>(null) }
     var errorMessage by remember(url) { mutableStateOf<String?>(null) }
     var retryTrigger by remember(url) { mutableStateOf(0) }
+    // bug #2: one automatic "update yt-dlp then retry" attempt per fetch session.
+    var autoUpdateAttempted by remember(url) { mutableStateOf(false) }
 
     // Selection state: -1 = no explicit selection (use the saved preset); >= 0 = video
     // resolution code from PreferenceUtil (1=2160p ... 6=360p); audio presets carry a
@@ -137,16 +141,57 @@ fun FetchPreviewSheet(
         }
     }
 
+    // bug #4: guard the whole fetch with a hard timeout. getPlaylistOrVideoInfo blocks
+    // on the yt-dlp process; without a deadline a hung process pinned the sheet open
+    // forever (`fetching == true` + modal scrim) and the whole screen looked dead.
     LaunchedEffect(url, retryTrigger) {
+        suspend fun attemptFetch(): Result<Any?> =
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    withTimeout(60_000L) {
+                        DownloadUtil.getPlaylistOrVideoInfo(
+                            playlistURL = url,
+                            downloadPreferences =
+                                DownloadUtil.DownloadPreferences.createFromPreferences(),
+                        )
+                    }
+                }
+            }
+
+        fun looksLikeExtractionFailure(th: Throwable?): Boolean {
+            val msg = (th?.message ?: "").lowercase()
+            return listOf(
+                    "unsupported url",
+                    "unable to extract",
+                    "failed to extract",
+                    "no video formats",
+                    "no video could be found",
+                    "sign in to confirm",
+                    "nsig",
+                    "player response",
+                    "http error 4",
+                    "http error 5",
+                    "requested format",
+                )
+                .any { msg.contains(it) }
+        }
+
         fetching = true
         errorMessage = null
-        val result =
-            withContext(Dispatchers.IO) {
-                DownloadUtil.getPlaylistOrVideoInfo(
-                    playlistURL = url,
-                    downloadPreferences = DownloadUtil.DownloadPreferences.createFromPreferences(),
-                )
-            }
+        var result = attemptFetch()
+        // bug #2: sites like Facebook change their pages constantly — a stale bundled
+        // yt-dlp is the usual cause of extraction failures (public reels included).
+        // On the first extraction failure, silently update the yt-dlp engine once and
+        // retry before showing an error to the user.
+        if (
+            result.isFailure &&
+                !autoUpdateAttempted &&
+                looksLikeExtractionFailure(result.exceptionOrNull())
+        ) {
+            autoUpdateAttempted = true
+            runCatching { UpdateUtil.updateYtDlp() }
+            result = attemptFetch()
+        }
         result
             .onSuccess { info ->
                 when (info) {
@@ -161,7 +206,12 @@ fun FetchPreviewSheet(
                     else -> errorMessage = "Unsupported result type"
                 }
             }
-            .onFailure { errorMessage = it.message ?: "Could not fetch media info" }
+            .onFailure { th ->
+                errorMessage =
+                    if (th is kotlinx.coroutines.TimeoutCancellationException)
+                        "Fetching took too long — check your connection and try again."
+                    else th.message ?: "Could not fetch media info"
+            }
         fetching = false
     }
 

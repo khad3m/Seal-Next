@@ -17,7 +17,14 @@ object NewPipeDownloader : Downloader() {
             "Chrome/131.0.0.0 Mobile Safari/537.36"
 
     private val client by lazy {
-        OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            // bug #5: a hard per-call deadline. readTimeout alone is per-read — a server
+            // that dribbles bytes slowly could stall extraction indefinitely, leaving the
+            // stream player loading forever.
+            .callTimeout(45, TimeUnit.SECONDS)
+            .build()
     }
 
     override fun execute(request: Request): Response {

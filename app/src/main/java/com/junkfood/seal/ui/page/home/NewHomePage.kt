@@ -228,8 +228,6 @@ fun NewHomePage(
     var duplicateUrlPending by remember { mutableStateOf<String?>(null) }
     var duplicateTitle by remember { mutableStateOf<String?>(null) }
     val wifiQueue by WifiQueueManager.queuedUrls.collectAsStateWithLifecycle()
-    var detectedClipboardUrl by remember { mutableStateOf<String?>(null) }
-    var dismissedClipboardUrl by remember { mutableStateOf<String?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // Pre-fill URL from share intent and auto-open the download dialog.
@@ -254,16 +252,10 @@ fun NewHomePage(
     // State to track lifecycle and force refresh
     var lifecycleRefreshTrigger by remember { mutableStateOf(0) }
 
-    LaunchedEffect(lifecycleRefreshTrigger) {
-        val clip = clipboardManager.getText()?.text
-        val matched = clip?.let { context.matchUrlFromClipboard(it) }
-        if (!matched.isNullOrBlank() && matched != dismissedClipboardUrl && matched != urlText) {
-            detectedClipboardUrl = matched
-        } else {
-            detectedClipboardUrl = null
-        }
-    }
-    
+    // NOTE (bug #1): the old clipboard auto-detect block was removed entirely — the app no
+    // longer reads the clipboard on open/resume or shows the auto-fetch banner. Manual
+    // paste (the paste button in URLInputField) still works as before.
+
     // Monitor lifecycle events to trigger refresh when screen resumes
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -862,68 +854,8 @@ fun NewHomePage(
                 )
             }
             
-            // Smart Clipboard Auto-Detect Banner
-            detectedClipboardUrl?.let { clipUrl ->
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        tonalElevation = 4.dp,
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Link,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Link detected in clipboard",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    text = clipUrl,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            TextButton(
-                                onClick = {
-                                    view.slightHapticFeedback()
-                                    urlText = clipUrl
-                                    dismissedClipboardUrl = clipUrl
-                                    detectedClipboardUrl = null
-                                    if (CONFIGURE.getBoolean() && !clipUrl.contains("list=")) {
-                                        fetchSheetUrl = clipUrl
-                                    } else {
-                                        dialogViewModel.startDownload(listOf(clipUrl))
-                                    }
-                                }
-                            ) {
-                                Text("Fetch")
-                            }
-                            IconButton(
-                                onClick = {
-                                    dismissedClipboardUrl = clipUrl
-                                    detectedClipboardUrl = null
-                                },
-                                modifier = Modifier.size(28.dp),
-                            ) {
-                                Icon(Icons.Outlined.Cancel, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                }
-            }
+            // NOTE (bug #1): the "Smart Clipboard Auto-Detect Banner" was removed —
+            // the app no longer watches the clipboard or auto-fetches from it.
 
             // URL Input Field with Download Button
             item {
@@ -1146,6 +1078,10 @@ fun NewHomePage(
                                             state.videoInfo?.title?.ifBlank { deleteTitle }
                                                 ?: deleteTitle
                                         FileUtil.deleteTempFilesForTask(baseName, videoId)
+                                        // bug #7: cancel the running process BEFORE removing,
+                                        // otherwise the yt-dlp/aria2c subprocess survives as an
+                                        // orphan and keeps burning RAM after the task is gone.
+                                        runCatching { downloader.cancel(task) }
                                         downloader.remove(task)
                                     }
                                 }
